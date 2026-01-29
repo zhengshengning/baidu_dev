@@ -9,14 +9,18 @@ export CUDA_HOME=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
 
-# pytorch编译
-#  python -m pip install -e .
-#  uv pip install --no-build-isolation -v -e .
+# 【Pytorch编译】
+# python -m pip install -e .
+# uv pip install --no-build-isolation -v -e .
 
-# 【命令行自动补全】
-# apt install -y bash-completion
-# if [ -f /etc/bash_completion ]; then
-#   . /etc/bash_completion
-# fi
+# 【创建Paddle开发环境】
+# virtualenv -p /usr/bin/python3.10 paddle_env
+# source paddle_env/bin/activate
+# python -m pip install --upgrade pip
 
+# 【Cmake安装】
+# pip install cmake==3.27.0
 
+# 【PR提交】
+# pip install pre-commit==2.17.0
+# pre-commit install
