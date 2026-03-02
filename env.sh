@@ -8,6 +8,8 @@ source /root/paddlejob/share-storage/gpfs/system-public/ningzhengsheng/paddle_en
 export CUDA_HOME=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
+export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengsheng/src/Paddle/build/python/:$PYTHONPATH
+export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengsheng/src/Paddle/build/:$PYTHONPATH
 
 # 【Pytorch编译】
 # python -m pip install -e .
@@ -24,3 +26,6 @@ export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 # 【PR提交】
 # pip install pre-commit==2.17.0
 # pre-commit install
+
+# 【安装官网 paddle】
+# uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall
