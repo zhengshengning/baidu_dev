@@ -1,6 +1,6 @@
 export no_proxy=localhost,bj.bcebos.com,su.bcebos.com,pypi.tuna.tsinghua.edu.cn,paddle-ci.gz.bcebos.com,0.0.0.0,baidu-int.com,aliyun.com,127.0.0.1,.baidu.com,.bcebos.com && export http_proxy=http://agent.baidu.com:8891 && export https_proxy=http://agent.baidu.com:8891
-# export https_proxy="agent.baidu.com:8188"
-# export http_proxy="agent.baidu.com:8188"
+export http_proxy=agent.baidu.com:8891
+export https_proxy=agent.baidu.com:8891
 export no_proxy="baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com"
 
 
@@ -29,3 +29,11 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 
 # 【安装官网 paddle】
 # uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall
+# python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu126/ --force-reinstall
+
+
+# LD_PRELOAD=/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/libcublasLt.so.12 timeout 180 python test.py
+# sin_scale_time_from_torch, max abs diff: 1.1920929e-07
+# sin_scale_time_from_torch, mean abs diff: 9.781356e-09
+# cos_scale_time_from_torch, max abs diff: 1.1920929e-07
+# cos_scale_time_from_torch, mean abs diff: 1.5011258e-08

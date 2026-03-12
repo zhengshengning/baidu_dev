@@ -43,12 +43,12 @@ def benchmark_paddle_vs_torch_rms_norm_backward():
     epsilon = 1e-5
     
     # 测试参数
-    batch_sizes = [1, 8, 32, 128, 200, 500, 1000]
-    hidden_sizes1 = [768, 1024, 1536, 2304, 2048, 3072, 4096, 8192, 10240]
-    # batch_sizes = [32]
-    # hidden_sizes1 = [32]
+    # batch_sizes = [1, 8, 32, 128, 200, 500, 1000]
+    # hidden_sizes1 = [768, 1024, 1536, 2304, 2048, 3072, 4096, 8192, 10240]
+    batch_sizes = [32]
+    hidden_sizes1 = [32]
     hidden_sizes2 = [2]
-    seq_lens = [32]
+    seq_lens = [0]
     dtypes = ['bfloat16', 'float16', 'float32', 'float64']
     
     print("=" * 80)
@@ -163,34 +163,38 @@ def benchmark_paddle_vs_torch_rms_norm_backward():
                             speedup = (torch_avg - paddle_avg) / torch_avg * 100 if torch_avg > 0 else 0
                             
                             # === 梯度精度对比 ===
-                            grad_x_mse = np.mean((grad_x_paddle - grad_x_torch) ** 2) if grad_x_paddle is not None and grad_x_torch is not None else 0
-                            grad_x_max_diff = np.max(np.abs(grad_x_paddle - grad_x_torch)) if grad_x_paddle is not None and grad_x_torch is not None else 0
+                            # grad_x_mse = np.mean((grad_x_paddle - grad_x_torch) ** 2) if grad_x_paddle is not None and grad_x_torch is not None else 0
+                            # grad_x_max_diff = np.max(np.abs(grad_x_paddle - grad_x_torch)) if grad_x_paddle is not None and grad_x_torch is not None else 0
                             
                             grad_weight_mse = np.mean((grad_weight_paddle - grad_weight_torch) ** 2) if grad_weight_paddle is not None and grad_weight_torch is not None else 0
                             grad_weight_max_diff = np.max(np.abs(grad_weight_paddle - grad_weight_torch)) if grad_weight_paddle is not None and grad_weight_torch is not None else 0
                             
-                            print("\n" + "=" * 80)
-                            # print(f"    Paddle 反向时间: {paddle_avg:.3f}ms (min:{paddle_min:.3f}, max:{paddle_max:.3f})")
-                            # print(f"    PyTorch 反向时间: {torch_avg:.3f}ms (min:{torch_min:.3f}, max:{torch_max:.3f})")
-                            # print(f"    Paddle 性能提升: {speedup:+.1f}% (相对于PyTorch)")
-                            print(f"    梯度精度对比:")
-                            print(f"      grad_x: MSE={grad_x_mse:.2e}, MaxDiff={grad_x_max_diff:.2e}")
+                            print("grad_x_paddle",grad_x_paddle)
+                            print("grad_x_torch",grad_x_torch)
+                            # print("grad_weight_paddle",grad_weight_paddle)
+                            # print("grad_weight_torch",grad_weight_torch)
+                            # print("\n" + "=" * 80)
+                            # # print(f"    Paddle 反向时间: {paddle_avg:.3f}ms (min:{paddle_min:.3f}, max:{paddle_max:.3f})")
+                            # # print(f"    PyTorch 反向时间: {torch_avg:.3f}ms (min:{torch_min:.3f}, max:{torch_max:.3f})")
+                            # # print(f"    Paddle 性能提升: {speedup:+.1f}% (相对于PyTorch)")
+                            # print(f"    梯度精度对比:")
+                            # print(f"      grad_x: MSE={grad_x_mse:.2e}, MaxDiff={grad_x_max_diff:.2e}")
                             print(f"      grad_weight: MSE={grad_weight_mse:.2e}, MaxDiff={grad_weight_max_diff:.2e}")
-                            print("=" * 80)
+                            # print("=" * 80)
                             
-                            results.append({
-                                'Batch Size': batch_size,
-                                'Hidden Size': (hidden_size1,hidden_size2),
-                                'Seq Len': seq_len,
-                                'Dtype': dtype,
-                                'Paddle Backward Time(ms)': f"{paddle_avg:.3f}",
-                                'PyTorch Backward Time(ms)': f"{torch_avg:.3f}",
-                                'Paddle Speedup(%)': f"{speedup:.1f}",
-                                'grad_x MSE': f"{grad_x_mse:.2e}",
-                                'grad_x MaxDiff': f"{grad_x_max_diff:.2e}",
-                                'grad_weight MSE': f"{grad_weight_mse:.2e}",
-                                'grad_weight MaxDiff': f"{grad_weight_max_diff:.2e}",
-                            })
+                            # results.append({
+                            #     'Batch Size': batch_size,
+                            #     'Hidden Size': (hidden_size1,hidden_size2),
+                            #     'Seq Len': seq_len,
+                            #     'Dtype': dtype,
+                            #     'Paddle Backward Time(ms)': f"{paddle_avg:.3f}",
+                            #     'PyTorch Backward Time(ms)': f"{torch_avg:.3f}",
+                            #     'Paddle Speedup(%)': f"{speedup:.1f}",
+                            #     'grad_x MSE': f"{grad_x_mse:.2e}",
+                            #     'grad_x MaxDiff': f"{grad_x_max_diff:.2e}",
+                            #     'grad_weight MSE': f"{grad_weight_mse:.2e}",
+                            #     'grad_weight MaxDiff': f"{grad_weight_max_diff:.2e}",
+                            # })
                         
                         except Exception as e:
                             print(f"    测试失败: {e}")

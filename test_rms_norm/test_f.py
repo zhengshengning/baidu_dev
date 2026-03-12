@@ -45,8 +45,8 @@ def benchmark_paddle_vs_torch_layer_norm():
     # 测试参数
     # batch_sizes = [32, 128, 200, 500, 800]
     # hidden_sizes1 = [766,1534,2302, 3070,4094,5122,8190,10242,12802,14334,16382,18430,20482]
-    # batch_sizes = [32]
-    # hidden_sizes1 = [32]
+    batch_sizes = [0]
+    hidden_sizes1 = [32]
     hidden_sizes2 = [2]
     seq_lens = [32]
     dtypes = ['bfloat16', 'float16', 'float32', 'float64']
@@ -129,30 +129,33 @@ def benchmark_paddle_vs_torch_layer_norm():
                             y_paddle_np = y_paddle[0].astype('float32').numpy()
                             y_torch_np = y_torch.cpu().to(dtype=torch.float32).numpy()
                             
-                            mse = np.mean((y_paddle_np - y_torch_np) ** 2)
-                            max_diff = np.max(np.abs(y_paddle_np - y_torch_np))
-                            mean_abs_diff = np.mean(np.abs(y_paddle_np - y_torch_np))
-                            
-                            print("\n" + "=" * 80)
-                            # print(f"    Paddle LayerNorm: {paddle_avg:.3f}ms (min:{paddle_min:.3f}, max:{paddle_max:.3f})")
-                            # print(f"    PyTorch LayerNorm: {torch_avg:.3f}ms (min:{torch_min:.3f}, max:{torch_max:.3f})")
-                            # print(f"    Paddle 性能提升: {speedup:+.1f}% (相对于PyTorch)")
-                            print(f"    精度对比:")
-                            print(f"      MSE={mse:.2e}, MaxDiff={max_diff:.2e}, MeanAbsDiff={mean_abs_diff:.2e}")
-                            print("=" * 80)
+                            # mse = np.mean((y_paddle_np - y_torch_np) ** 2)
+                            # max_diff = np.max(np.abs(y_paddle_np - y_torch_np))
+                            # mean_abs_diff = np.mean(np.abs(y_paddle_np - y_torch_np))
 
-                            results.append({
-                                'Batch Size': batch_size,
-                                'Hidden Size': hidden_size1,
-                                'Seq Len': seq_len,
-                                'Dtype': dtype,
-                                'Paddle Time(ms)': f"{paddle_avg:.3f}",
-                                'PyTorch Time(ms)': f"{torch_avg:.3f}",
-                                'Paddle Speedup(%)': f"{speedup:.1f}",
-                                'MSE': f"{mse:.2e}",
-                                'MaxDiff': f"{max_diff:.2e}",
-                                'MeanAbsDiff': f"{mean_abs_diff:.2e}",
-                            })
+                            print("y_paddle_np", y_paddle_np)
+                            print("y_torch_np", y_torch_np)
+                            
+                            # print("\n" + "=" * 80)
+                            # # print(f"    Paddle LayerNorm: {paddle_avg:.3f}ms (min:{paddle_min:.3f}, max:{paddle_max:.3f})")
+                            # # print(f"    PyTorch LayerNorm: {torch_avg:.3f}ms (min:{torch_min:.3f}, max:{torch_max:.3f})")
+                            # # print(f"    Paddle 性能提升: {speedup:+.1f}% (相对于PyTorch)")
+                            # print(f"    精度对比:")
+                            # print(f"      MSE={mse:.2e}, MaxDiff={max_diff:.2e}, MeanAbsDiff={mean_abs_diff:.2e}")
+                            # print("=" * 80)
+
+                            # results.append({
+                            #     'Batch Size': batch_size,
+                            #     'Hidden Size': hidden_size1,
+                            #     'Seq Len': seq_len,
+                            #     'Dtype': dtype,
+                            #     'Paddle Time(ms)': f"{paddle_avg:.3f}",
+                            #     'PyTorch Time(ms)': f"{torch_avg:.3f}",
+                            #     'Paddle Speedup(%)': f"{speedup:.1f}",
+                            #     'MSE': f"{mse:.2e}",
+                            #     'MaxDiff': f"{max_diff:.2e}",
+                            #     'MeanAbsDiff': f"{mean_abs_diff:.2e}",
+                            # })
                         
                         except Exception as e:
                             print(f"    测试失败: {e}")
