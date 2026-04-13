@@ -1,113 +1,194 @@
-#!/usr/bin/env python3
-"""
-Performance test for Paddle topk operation.
-Compares different scenarios and measures execution time.
-"""
-
-import paddle
-import time
 import numpy as np
+import paddle
+import torch
+import time
+import csv
 
-def warmup(device='gpu'):
-    """Warmup GPU"""
-    if device == 'gpu':
-        x = paddle.randn([1000, 1000])
-        for _ in range(10):
-            paddle.topk(x, 10)
-        paddle.device.cuda.synchronize()
+results = []
 
-def benchmark_topk(shape, k, num_runs=100, largest=True, device='gpu'):
-    """Benchmark topk operation"""
-    x = paddle.randn(shape)
+def run_benchmark(shape, k, dtype_str, warmup_iters=100, test_iters=1000):
+    """
+    测试 paddle.topk 与 torch.topk 的性能对比
     
+    Args:
+        shape: 输入张量的形状，如 (M, N)
+        k: topk 的 k 值
+        dtype_str: 数据类型字符串，如 'float32', 'float16', 'bfloat16'
+        warmup_iters: 预热迭代次数
+        test_iters: 测试迭代次数
+    """
+    # 设置数据类型映射
+    paddle_dtype_map = {
+        'float32': 'float32',
+        'float16': 'float16',
+        'bfloat16': 'bfloat16',
+    }
+    torch_dtype_map = {
+        'float32': torch.float32,
+        'float16': torch.float16,
+        'bfloat16': torch.bfloat16,
+    }
+    
+    paddle_dtype = paddle_dtype_map[dtype_str]
+    torch_dtype = torch_dtype_map[dtype_str]
+    
+    # 生成随机数据
+    np_data = np.random.randn(*shape).astype(np.float32)
+    
+    # 创建 Paddle tensor
+    paddle_data = paddle.to_tensor(np_data, dtype=paddle_dtype)
+    
+    # 创建 PyTorch tensor
+    torch_data = torch.from_numpy(np_data).to(torch_dtype).cuda()
+    
+    print(f"\n{'='*60}")
+    print(f"Shape: {shape}, K: {k}, Dtype: {dtype_str}")
+    print(f"{'='*60}")
+    
+    # ============== Paddle Benchmark ==============
     # Warmup
-    for _ in range(5):
-        paddle.topk(x, k, largest=largest)
-    paddle.device.cuda.synchronize()
+    for _ in range(warmup_iters):
+        paddle.topk(paddle_data, k, axis=1, sorted=True)
+    paddle.device.synchronize()
     
     # Benchmark
-    start = time.perf_counter()
-    for _ in range(num_runs):
-        paddle.topk(x, k, largest=largest)
-    paddle.device.cuda.synchronize()
-    end = time.perf_counter()
+    start_time = time.time()
+    for _ in range(test_iters):
+        pd_values, pd_indices = paddle.topk(paddle_data, k, axis=1, sorted=True)
+    paddle.device.synchronize()
+    end_time = time.time()
     
-    avg_time = (end - start) / num_runs * 1000  # ms
-    return avg_time
+    paddle_total_time = (end_time - start_time) * 1000.0  # ms
+    paddle_avg_time = paddle_total_time / test_iters
+    
+    print(f"[Paddle topk]")
+    print(f"  Total time ({test_iters} runs): {paddle_total_time:.3f} ms")
+    print(f"  Average time per run: {paddle_avg_time:.4f} ms")
+    
+    # ============== PyTorch Benchmark ==============
+    # Warmup
+    for _ in range(warmup_iters):
+        torch.topk(torch_data, k, dim=1, sorted=True)
+    torch.cuda.synchronize()
+    
+    # Benchmark
+    start_time = time.time()
+    for _ in range(test_iters):
+        torch_values, torch_indices = torch.topk(torch_data, k, dim=1, sorted=True)
+    torch.cuda.synchronize()
+    end_time = time.time()
+    
+    torch_total_time = (end_time - start_time) * 1000.0  # ms
+    torch_avg_time = torch_total_time / test_iters
+    
+    print(f"[Torch topk]")
+    print(f"  Total time ({test_iters} runs): {torch_total_time:.3f} ms")
+    print(f"  Average time per run: {torch_avg_time:.4f} ms")
+    
+    # ============== 性能对比 ==============
+    speedup = torch_avg_time / paddle_avg_time if paddle_avg_time > 0 else 0
+    print(f"\n[Performance Comparison]")
+    print(f"  Speedup (Torch/Paddle): {speedup:.2f}x")
+    if speedup > 1:
+        print(f"  -> Paddle is {speedup:.2f}x faster than Torch")
+    else:
+        print(f"  -> Torch is {1/speedup:.2f}x faster than Paddle")
+    
+    # ============== 正确性验证 ==============
+    pd_values_np = pd_values.astype("float32").numpy()
+    pd_indices_np = pd_indices.numpy()
+    torch_values_np = torch_values.float().cpu().numpy()
+    torch_indices_np = torch_indices.cpu().numpy()
+    
+    values_diff = np.max(np.abs(pd_values_np - torch_values_np))
+    indices_match = np.array_equal(pd_indices_np, torch_indices_np)
+    
+    print(f"\n[Correctness Check]")
+    print(f"  Max abs diff (values): {values_diff:.6f}")
+    print(f"  Indices match: {indices_match}")
+    
+    # 保存结果
+    results.append({
+        'Shape': str(shape),
+        'K': k,
+        'Dtype': dtype_str,
+        'Paddle_Avg(ms)': f"{paddle_avg_time:.4f}",
+        'Torch_Avg(ms)': f"{torch_avg_time:.4f}",
+        'Speedup': f"{speedup:.2f}",
+        'Values_Diff': f"{values_diff:.6f}",
+        'Indices_Match': indices_match,
+    })
 
-def main():
-    paddle.set_device('gpu')
-    warmup()
-    
-    print("=" * 80)
-    print("Paddle TopK Performance Benchmark")
-    print("=" * 80)
-    
-    # Test scenarios
-    test_cases = [
-        # (shape, k, description)
-        # Basic cases
-        ([32, 1000], 10, "Small batch, small k"),
-        ([32, 1000], 100, "Small batch, medium k"),
-        ([32, 10000], 10, "Small batch, large slice"),
-        ([32, 10000], 100, "Small batch, large slice, medium k"),
-        ([32, 100000], 10, "Small batch, very large slice"),
-        
-        # NLP scenarios
-        ([16, 50257], 50, "GPT vocab topk (beam search)"),
-        ([32, 50257], 10, "GPT vocab topk (top-p sampling)"),
-        
-        # MoE scenarios
-        ([4096, 64], 8, "MoE router (tokens x experts)"),
-        ([8192, 64], 8, "MoE router large batch"),
-        
-        # Large batch
-        ([1024, 1000], 10, "Large batch"),
-        ([4096, 1000], 10, "Very large batch"),
-        
-        # Recommendation
-        ([256, 1000000], 100, "Recommendation (large candidate pool)"),
-    ]
-    
-    print(f"\n{'Shape':<25} {'k':<8} {'Time(ms)':<12} Description")
-    print("-" * 80)
-    
-    for shape, k, desc in test_cases:
-        try:
-            avg_time = benchmark_topk(shape, k)
-            print(f"{str(shape):<25} {k:<8} {avg_time:<12.4f} {desc}")
-        except Exception as e:
-            print(f"{str(shape):<25} {k:<8} {'ERROR':<12} {desc} - {e}")
-    
-    print("\n" + "=" * 80)
-    print("K-value impact analysis (shape=[32, 10000])")
-    print("=" * 80)
-    
-    k_values = [1, 5, 10, 20, 50, 100, 200, 500, 1000]
-    print(f"\n{'k':<10} {'Time(ms)':<12}")
-    print("-" * 30)
-    
-    for k in k_values:
-        try:
-            avg_time = benchmark_topk([32, 10000], k)
-            print(f"{k:<10} {avg_time:<12.4f}")
-        except Exception as e:
-            print(f"{k:<10} {'ERROR':<12}")
-    
-    print("\n" + "=" * 80)
-    print("Slice size impact analysis (batch=32, k=10)")
-    print("=" * 80)
-    
-    slice_sizes = [100, 500, 1000, 5000, 10000, 50000, 100000]
-    print(f"\n{'Slice Size':<15} {'Time(ms)':<12}")
-    print("-" * 30)
-    
-    for size in slice_sizes:
-        try:
-            avg_time = benchmark_topk([32, size], 10)
-            print(f"{size:<15} {avg_time:<12.4f}")
-        except Exception as e:
-            print(f"{size:<15} {'ERROR':<12}")
+
+def save_results_to_csv(filename='topk_benchmark_results.csv'):
+    """保存结果到 CSV 文件"""
+    if results:
+        fieldnames = [
+            'Shape', 'K', 'Dtype', 'Paddle_Avg(ms)', 'Torch_Avg(ms)', 
+            'Speedup', 'Values_Diff', 'Indices_Match'
+        ]
+        with open(filename, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\n结果已保存至: {filename}")
+
 
 if __name__ == "__main__":
-    main()
+    # 检查CUDA是否可用
+    if paddle.device.is_compiled_with_cuda() and torch.cuda.is_available():
+        print("CUDA可用，使用GPU进行测试")
+        paddle.set_device('gpu:2')
+        torch.cuda.set_device(2)
+    else:
+        print("警告: CUDA不可用或PyTorch未检测到CUDA")
+        if not paddle.device.is_compiled_with_cuda():
+            print("  - Paddle CUDA不可用")
+        if not torch.cuda.is_available():
+            print("  - PyTorch CUDA不可用")
+        exit(1)
+    
+    # ============== 测试配置 ==============
+    # 不同的 shape 配置
+    shapes = [
+        (1024, 128, 1),      # 小规模
+        (2048, 256, 1),      # 中等规模
+        (4096, 512, 1),      # 较大规模
+        (8192, 1024, 1),     # 大规模
+        (16384, 2048, 1),    # 超大规模
+        (32768, 64, 1),      # 高 batch，小 dim
+        (16384, 512, 1),     # 中 batch，大 dim
+        (512, 8192, 1),      # 低 batch，大 dim
+        (1, 369303, 1),    # 超高 batch，中等 dim
+    ]
+    
+    # 不同的 k 值
+    ks = [1, 8, 16, 32, 64]
+    
+    # 不同的数据类型
+    dtypes = ['float32', 'float16', 'bfloat16']
+    
+    # 运行测试
+    for shape in shapes:
+        for k in ks:
+            # 确保 k 不超过最后一个维度
+            if k > shape[1]:
+                continue
+            for dtype in dtypes:
+                try:
+                    run_benchmark(shape, k, dtype, warmup_iters=50, test_iters=500)
+                except Exception as e:
+                    print(f"测试失败: shape={shape}, k={k}, dtype={dtype}")
+                    print(f"错误信息: {e}")
+    
+    # 保存结果
+    save_results_to_csv()
+    
+    # 打印汇总表格
+    print("\n" + "="*80)
+    print("性能测试汇总")
+    print("="*80)
+    print(f"{'Shape':<20} {'K':<6} {'Dtype':<10} {'Paddle(ms)':<12} {'Torch(ms)':<12} {'Speedup':<10}")
+    print("-"*80)
+    for r in results:
+        print(f"{r['Shape']:<20} {r['K']:<6} {r['Dtype']:<10} {r['Paddle_Avg(ms)']:<12} {r['Torch_Avg(ms)']:<12} {r['Speedup']:<10}")

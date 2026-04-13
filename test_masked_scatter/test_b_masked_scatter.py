@@ -49,8 +49,10 @@ def run_benchmark(B, N, num_warmup=100, num_runs=1000, mask_ratio=0.3):
     # 性能测试 - 只测 backward
     torch.cuda.synchronize()
     start_time = time.time()
+    # paddle.base.core.nvprof_start() #######################################
     for _ in range(num_runs):
         loss_torch.backward(retain_graph=True)
+    # paddle.base.core.nvprof_stop() #######################################
     torch.cuda.synchronize()
     end_time = time.time()
 
@@ -84,8 +86,10 @@ def run_benchmark(B, N, num_warmup=100, num_runs=1000, mask_ratio=0.3):
     # 性能测试 - 只测 backward
     paddle.device.synchronize()
     start_time = time.time()
+    # paddle.base.core.nvprof_start() #######################################
     for _ in range(num_runs):
         loss_paddle.backward(retain_graph=True)
+    # paddle.base.core.nvprof_stop() #######################################
     paddle.device.synchronize()
     end_time = time.time()
 
@@ -103,12 +107,12 @@ def run_benchmark(B, N, num_warmup=100, num_runs=1000, mask_ratio=0.3):
     # source 梯度对比
     source_max_diff = np.abs(torch_source_grad - paddle_source_grad).max()
     source_mean_diff = np.abs(torch_source_grad - paddle_source_grad).mean()
-    source_is_close = np.allclose(torch_source_grad, paddle_source_grad, rtol=1e-5, atol=1e-5)
+    source_is_close = np.allclose(torch_source_grad, paddle_source_grad, rtol=0, atol=0)
 
     # base 梯度对比
     base_max_diff = np.abs(torch_base_grad - paddle_base_grad).max()
     base_mean_diff = np.abs(torch_base_grad - paddle_base_grad).mean()
-    base_is_close = np.allclose(torch_base_grad, paddle_base_grad, rtol=1e-5, atol=1e-5)
+    base_is_close = np.allclose(torch_base_grad, paddle_base_grad, rtol=0, atol=0)
 
     print(f"\n[梯度结果对比]")
     print(f"  Source grad - Max diff: {source_max_diff:.6e}, Mean diff: {source_mean_diff:.6e}, Match: {source_is_close}")
@@ -161,26 +165,26 @@ if __name__ == "__main__":
     test_shapes = [
         # 小规模测试
         (128, 512),
-        # (256, 512),
-        # (512, 512),
-        # (512, 1024),
-        # (1024, 1024),
-        # # 中等规模测试
-        # (1024, 2048),
-        # (1024, 4096),
-        # (2048, 2048),
-        # (2048, 4096),
-        # (4096, 4096),
-        # # 大规模测试
-        # (4096, 8192),
-        # (8192, 4096),
-        # (8192, 8192),
-        # (16384, 4096),
-        # (4096, 16384),
-        # # 超大规模测试 (可选，根据显存情况)
-        # (16384, 8192),
-        # (8192, 16384),
-        # (16384, 16384),
+        (256, 512),
+        (512, 512),
+        (512, 1024),
+        (1024, 1024),
+        # 中等规模测试
+        (1024, 2048),
+        (1024, 4096),
+        (2048, 2048),
+        (2048, 4096),
+        (4096, 4096),
+        # 大规模测试
+        (4096, 8192),
+        (8192, 4096),
+        (8192, 8192),
+        (16384, 4096),
+        (4096, 16384),
+        # 超大规模测试 (可选，根据显存情况)
+        (16384, 8192),
+        (8192, 16384),
+        (16384, 16384),
     ]
 
     # 运行所有测试
@@ -203,25 +207,25 @@ if __name__ == "__main__":
             })
 
     # 保存结果到CSV
-    # if results:
-    #     csv_file = 'masked_scatter_backward_benchmark_results.csv'
-    #     fieldnames = [
-    #         'B', 'N', 'Total Elements', 'Mask Ratio',
-    #         'Torch Backward(ms)', 'Paddle Backward(ms)', 'Speedup(Torch/Paddle)',
-    #         'Source Grad Max Diff', 'Base Grad Max Diff', 'Grad Match'
-    #     ]
+    if results:
+        csv_file = 'masked_scatter_b_benchmark_results.csv'
+        fieldnames = [
+            'B', 'N', 'Total Elements', 'Mask Ratio',
+            'Torch Backward(ms)', 'Paddle Backward(ms)', 'Speedup(Torch/Paddle)',
+            'Source Grad Max Diff', 'Base Grad Max Diff', 'Grad Match'
+        ]
         
-    #     with open(csv_file, 'w', newline='') as f:
-    #         writer = csv.DictWriter(f, fieldnames=fieldnames)
-    #         writer.writeheader()
-    #         writer.writerows(results)
-    #     print(f"\n{'='*60}")
-    #     print(f"结果已保存至: {csv_file}")
-    #     print(f"{'='*60}")
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\n{'='*60}")
+        print(f"结果已保存至: {csv_file}")
+        print(f"{'='*60}")
 
-    #     # 打印汇总表格
-    #     print("\n\n========== 反向梯度性能结果汇总 ==========")
-    #     print(f"{'B':>8} {'N':>8} {'Torch(ms)':>14} {'Paddle(ms)':>14} {'Speedup':>10} {'GradMatch':>10}")
-    #     print("-" * 70)
-    #     for r in results:
-    #         print(f"{r['B']:>8} {r['N']:>8} {r['Torch Backward(ms)']:>14} {r['Paddle Backward(ms)']:>14} {r['Speedup(Torch/Paddle)']:>10} {str(r['Grad Match']):>10}")
+        # 打印汇总表格
+        print("\n\n========== 反向梯度性能结果汇总 ==========")
+        print(f"{'B':>8} {'N':>8} {'Torch(ms)':>14} {'Paddle(ms)':>14} {'Speedup':>10} {'GradMatch':>10}")
+        print("-" * 70)
+        for r in results:
+            print(f"{r['B']:>8} {r['N']:>8} {r['Torch Backward(ms)']:>14} {r['Paddle Backward(ms)']:>14} {r['Speedup(Torch/Paddle)']:>10} {str(r['Grad Match']):>10}")

@@ -1,0 +1,2 @@
+Batch Size,Hidden Size,Seq Len,Dtype,Paddle Time(ms),PyTorch Time(ms),Paddle Speedup(%),MSE,MaxDiff,MeanAbsDiff
+200,2048,32,float32,5.398,9.574,43.6,0.00e+00,0.00e+00,0.00e+00

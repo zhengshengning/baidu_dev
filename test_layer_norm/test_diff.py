@@ -4,7 +4,7 @@ import torch
 import random
 
 import os
-os.environ['FLAGS_use_accuracy_compatible_kernel'] = '1'
+paddle.set_flags({'FLAGS_use_accuracy_compatible_kernel': 1})
 os.environ['FLAGS_embedding_deterministic'] = '1'
 os.environ['FLAGS_cudnn_deterministic'] = '1'
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'

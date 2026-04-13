@@ -26,6 +26,7 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 # 【PR提交】
 # pip install pre-commit==2.17.0
 # pre-commit install
+# PIP_INDEX_URL=https://pypi.org/simple git commit -m "fix"
 
 # 【安装官网 paddle】
 # uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall
@@ -33,7 +34,6 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 
 
 # LD_PRELOAD=/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/libcublasLt.so.12 timeout 180 python test.py
-# sin_scale_time_from_torch, max abs diff: 1.1920929e-07
-# sin_scale_time_from_torch, mean abs diff: 9.781356e-09
-# cos_scale_time_from_torch, max abs diff: 1.1920929e-07
-# cos_scale_time_from_torch, mean abs diff: 1.5011258e-08
+
+
+# cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DWITH_GPU=ON -DWITH_SHARED_PHI=ON -DWITH_TENSORRT=ON -DWITH_OPENVINO=OFF -DWITH_ROCM=OFF -DWITH_CINN=ON -DWITH_DISTRIBUTE=ON -DWITH_MKL=OFF -DWITH_AVX=ON -DCUDA_ARCH_NAME=Manual -DNEW_RELEASE_PYPI=OFF -DNEW_RELEASE_ALL=OFF -DNEW_RELEASE_JIT=OFF -DWITH_PYTHON=ON -DWITH_TESTING=OFF -DWITH_COVERAGE=OFF -DWITH_INCREMENTAL_COVERAGE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DWITH_INFERENCE_API_TEST=OFF -DPY_VERSION=3.10 -DWITH_PSLIB= -DWITH_GLOO=ON -DWITH_XPU=OFF -DWITH_IPU=OFF -DXPU_SDK_ROOT= -DWITH_XPU_BKCL=OFF -DWITH_XPU_XHPC=OFF -DWITH_XPU_XFT=OFF -DWITH_XPU_XRE5=OFF -DWITH_XPU_FFT=OFF -DWITH_ARM=OFF -DWITH_STRIP=ON -DON_INFER=OFF -DCUDA_ARCH_BIN="80 90 100 103 120" -DWITH_RECORD_BUILDTIME=OFF -DWITH_UNITY_BUILD=OFF -DWITH_ONNXRUNTIME=OFF -DWITH_CUDNN_FRONTEND=OFF -DWITH_CPP_TEST=OFF -DWITH_FA_BUILD_WITH_CACHE=ON

@@ -63,7 +63,7 @@ def paddle_to_np(paddle_data: paddle.Tensor):
     
 if __name__ == "__main__":
     channels = 1280
-    length = 15000
+    length = 1500
     max_timescale = 10000
 
     log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
@@ -72,13 +72,40 @@ if __name__ == "__main__":
 
     # compare exp & sin & cos: diff!
     torch_inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2).float().to(device))
-    print(torch_inv_timescales.device)
+    torch_scaled_time = torch.arange(length).to(device)[:, np.newaxis] * torch_inv_timescales[np.newaxis, :]
+    torch_positional_embedding = torch.cat([torch.sin(torch_scaled_time), torch.cos(torch_scaled_time)], dim=1)
+    
     np_torch_inv_timescales = torch_to_np(torch_inv_timescales)
+    np_torch_scaled_time = torch_to_np(torch_scaled_time)
+    np_torch_positional_embedding = torch_to_np(torch_positional_embedding)
 
     paddle_inv_timescales = paddle.exp(-log_timescale_increment * paddle.arange(channels // 2).float().to(device))
-    print(paddle_inv_timescales.device)
+    paddle_scaled_time = paddle.arange(length).astype(paddle_inv_timescales.dtype).to(device)[:, np.newaxis] * paddle_inv_timescales[np.newaxis, :]
+    paddle_positional_embedding = paddle.cat([paddle.sin(paddle_scaled_time), paddle.cos(paddle_scaled_time)], dim=1)
+
     np_paddle_inv_timescales = paddle_to_np(paddle_inv_timescales)
+    np_paddle_scaled_time = paddle_to_np(paddle_scaled_time)
+    np_paddle_positional_embedding = paddle_to_np(paddle_positional_embedding)
 
     compare_diff(np_torch_inv_timescales, np_paddle_inv_timescales, "inv_timescales")
-    print("len(np_torch_inv_timescales)", len(np_torch_inv_timescales))
+    compare_diff(np_torch_scaled_time, np_paddle_scaled_time, "scaled_time")
+    compare_diff(np_torch_positional_embedding, np_paddle_positional_embedding, "positional_embedding")
+
+    # compare * : no diff
+    paddle_inv_timescales = np_to_paddle(np_torch_inv_timescales, "float32", device)
+    paddle_scaled_time = paddle.arange(length).astype(paddle_inv_timescales.dtype).to(device)[:, np.newaxis] * paddle_inv_timescales[np.newaxis, :]
+    np_paddle_scaled_time = paddle_to_np(paddle_scaled_time)
+    compare_diff(np_torch_scaled_time, np_paddle_scaled_time, "scaled_time_from_torch")
+
+    # compare sin & cos : diff!
+    torch_sin_scaled_time, torch_cos_scaled_time = torch.sin(torch_scaled_time), torch.cos(torch_scaled_time)
+    np_torch_sin_scaled_time, np_torch_cos_scaled_time = torch_to_np(torch_sin_scaled_time), torch_to_np(torch_cos_scaled_time)
+
+    paddle_scaled_time = np_to_paddle(np_torch_scaled_time, "float32", device)
+    paddle_sin_scale_time, paddle_cos_scaled_time = paddle.sin(paddle_scaled_time), paddle.cos(paddle_scaled_time)
+    np_paddle_sin_scale_time, np_paddle_cos_scale_time = paddle_to_np(paddle_sin_scale_time), paddle_to_np(paddle_cos_scaled_time)
+
+    compare_diff(np_torch_sin_scaled_time, np_paddle_sin_scale_time, "sin_scale_time_from_torch")
+    compare_diff(np_torch_cos_scaled_time, np_paddle_cos_scale_time, "cos_scale_time_from_torch")
+
 

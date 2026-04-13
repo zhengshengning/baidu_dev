@@ -1,208 +1,244 @@
-"""
-Test script to verify that Paddle's topk indices align with PyTorch's behavior.
-
-When there are duplicate values, both frameworks should return the same indices
-(preferring smaller original indices for equal values).
-
-This version tests the KeMatrixTopK path (used when CUDA version conditions 
-for RadixTopK are not met, or as fallback).
-"""
-
 import numpy as np
+import paddle
+import torch
+import csv
 
-def test_topk_with_paddle():
-    """Test Paddle's topk implementation."""
-    import paddle
-    paddle.set_device('gpu')
-    
-    print("=" * 60)
-    print("Testing Paddle TopK with duplicate values")
-    print("=" * 60)
-    
-    # Test case 1: 1D tensor with duplicates
-    print("\n[Test 1] 1D tensor with duplicates:")
-    data = np.array([1.0, 3.0, 2.0, 3.0, 3.0, 1.0, 2.0], dtype=np.float32)
-    x = paddle.to_tensor(data)
-    values, indices = paddle.topk(x, k=5, largest=True, sorted=True)
-    print(f"  Input:   {data}")
-    print(f"  Values:  {values.numpy()}")
-    print(f"  Indices: {indices.numpy()}")
-    # Expected: values=[3,3,3,2,2], indices=[1,3,4,2,6] (smaller indices first for equal values)
-    
-    # Test case 2: 2D tensor, topk on last axis
-    print("\n[Test 2] 2D tensor, topk on axis=-1:")
-    data2d = np.array([
-        [5.0, 3.0, 5.0, 1.0, 5.0],
-        [2.0, 2.0, 2.0, 2.0, 1.0]
-    ], dtype=np.float32)
-    x2d = paddle.to_tensor(data2d)
-    values2d, indices2d = paddle.topk(x2d, k=3, axis=-1, largest=True, sorted=True)
-    print(f"  Input:\n{data2d}")
-    print(f"  Values:\n{values2d.numpy()}")
-    print(f"  Indices:\n{indices2d.numpy()}")
-    # Row 0 expected: values=[5,5,5], indices=[0,2,4] (smaller indices first)
-    # Row 1 expected: values=[2,2,2], indices=[0,1,2] (smaller indices first)
-    
-    # Test case 3: 2D tensor, topk on axis=0
-    print("\n[Test 3] 2D tensor, topk on axis=0:")
-    data_axis0 = np.array([
-        [3.0, 1.0, 2.0],
-        [3.0, 2.0, 2.0],
-        [1.0, 2.0, 3.0]
-    ], dtype=np.float32)
-    x_axis0 = paddle.to_tensor(data_axis0)
-    values_axis0, indices_axis0 = paddle.topk(x_axis0, k=2, axis=0, largest=True, sorted=True)
-    print(f"  Input:\n{data_axis0}")
-    print(f"  Values:\n{values_axis0.numpy()}")
-    print(f"  Indices:\n{indices_axis0.numpy()}")
-    
-    # Test case 4: Small tensor to test KeMatrixTopK path
-    print("\n[Test 4] Small 1D tensor (testing KeMatrixTopK path):")
-    np.random.seed(42)
-    small_data = np.random.randint(0, 10, size=50).astype(np.float32)
-    x_small = paddle.to_tensor(small_data)
-    values_small, indices_small = paddle.topk(x_small, k=10, largest=True, sorted=True)
-    print(f"  Input shape: {small_data.shape}")
-    print(f"  Top 10 values:  {values_small.numpy()}")
-    print(f"  Top 10 indices: {indices_small.numpy()}")
-    
-    # Verify stability: for equal values, indices should be in ascending order
-    vals = values_small.numpy()
-    inds = indices_small.numpy()
-    is_stable = True
-    for i in range(len(vals) - 1):
-        if vals[i] == vals[i+1] and inds[i] > inds[i+1]:
-            is_stable = False
-            print(f"  WARNING: Unstable at position {i}: val={vals[i]}, indices {inds[i]} > {inds[i+1]}")
-    print(f"  Stability check: {'PASSED' if is_stable else 'FAILED'}")
-    
-    # Test case 5: smallest=True (largest=False)
-    print("\n[Test 5] 1D tensor with smallest values (largest=False):")
-    values_smallest, indices_smallest = paddle.topk(x, k=3, largest=False, sorted=True)
-    print(f"  Input:   {data}")
-    print(f"  Values:  {values_smallest.numpy()}")
-    print(f"  Indices: {indices_smallest.numpy()}")
-    
-    print("\n" + "=" * 60)
-    print("Paddle TopK tests completed!")
-    print("=" * 60)
+results = []
 
 
-def test_topk_with_torch():
-    """Test PyTorch's topk implementation for comparison."""
-    try:
-        import torch
-        torch.set_default_device('cuda')
-        
-        print("\n" + "=" * 60)
-        print("Testing PyTorch TopK for comparison")
-        print("=" * 60)
-        
-        # Test case 1: 1D tensor with duplicates
-        print("\n[Test 1] 1D tensor with duplicates:")
-        data = np.array([1.0, 3.0, 2.0, 3.0, 3.0, 1.0, 2.0], dtype=np.float32)
-        x = torch.tensor(data)
-        values, indices = torch.topk(x, k=5, largest=True, sorted=True)
-        print(f"  Input:   {data}")
-        print(f"  Values:  {values.cpu().numpy()}")
-        print(f"  Indices: {indices.cpu().numpy()}")
-        
-        # Test case 2: 2D tensor, topk on last axis
-        print("\n[Test 2] 2D tensor, topk on dim=-1:")
-        data2d = np.array([
-            [5.0, 3.0, 5.0, 1.0, 5.0],
-            [2.0, 2.0, 2.0, 2.0, 1.0]
-        ], dtype=np.float32)
-        x2d = torch.tensor(data2d)
-        values2d, indices2d = torch.topk(x2d, k=3, dim=-1, largest=True, sorted=True)
-        print(f"  Input:\n{data2d}")
-        print(f"  Values:\n{values2d.cpu().numpy()}")
-        print(f"  Indices:\n{indices2d.cpu().numpy()}")
-        
-        # Test case 4: Small tensor
-        print("\n[Test 4] Small 1D tensor:")
-        np.random.seed(42)
-        small_data = np.random.randint(0, 10, size=50).astype(np.float32)
-        x_small = torch.tensor(small_data)
-        values_small, indices_small = torch.topk(x_small, k=10, largest=True, sorted=True)
-        print(f"  Input shape: {small_data.shape}")
-        print(f"  Top 10 values:  {values_small.cpu().numpy()}")
-        print(f"  Top 10 indices: {indices_small.cpu().numpy()}")
-        
-        print("\n" + "=" * 60)
-        print("PyTorch TopK tests completed!")
-        print("=" * 60)
-        
-    except ImportError:
-        print("\nPyTorch not available, skipping comparison tests.")
+def test_correctness(shape, k, dtype_str):
+    """
+    测试 paddle.topk 与 torch.topk 的正确性对比
+
+    Args:
+        shape: 输入张量的形状，如 (M, N)
+        k: topk 的 k 值
+        dtype_str: 数据类型字符串，如 'float32', 'float16', 'bfloat16'
+    """
+    torch_dtype_map = {
+        'float32': torch.float32,
+        'float16': torch.float16,
+        'bfloat16': torch.bfloat16,
+        'int32': torch.int32,
+    }
+    torch_dtype = torch_dtype_map[dtype_str]
+
+    # 生成随机数据
+    numel = 1
+    for s in shape:
+        numel *= s
+    if dtype_str == 'int32':
+        high = max(numel // (2 * k), 2)
+        np_data = np.random.randint(1, high, size=shape).astype(np.int32)
+    else:
+        np_data = np.random.randn(*shape).astype(np.float32)
+
+    # Paddle topk
+    paddle_data = paddle.to_tensor(np_data, dtype=dtype_str)
+    pd_values, pd_indices = paddle.topk(paddle_data, k, axis=1, sorted=True)
+    pd_values_np = pd_values.astype("float32").numpy()
+    pd_indices_np = pd_indices.numpy()
+
+    # Torch topk
+    torch_data = torch.from_numpy(np_data).to(torch_dtype).cuda()
+    torch_values, torch_indices = torch.topk(torch_data, k, dim=1, sorted=True)
+    torch_values_np = torch_values.float().cpu().numpy()
+    torch_indices_np = torch_indices.cpu().numpy()
+
+    # 比较 values
+    values_diff = np.max(np.abs(pd_values_np - torch_values_np))
+    values_mean_diff = np.mean(np.abs(pd_values_np - torch_values_np))
+
+    # 比较 indices
+    indices_match = np.array_equal(pd_indices_np, torch_indices_np)
+    indices_diff_count = np.sum(pd_indices_np != torch_indices_np)
+    indices_total = pd_indices_np.size
+
+    # 判断是否通过
+    passed = indices_match and values_diff == 0
+    status = "PASS" if passed else "FAIL"
+
+    print(f"[{status}] shape={str(shape):<20} k={k:<4} dtype={dtype_str:<10} "
+          f"val_max_diff={values_diff:.6f}  val_mean_diff={values_mean_diff:.6f}  "
+          f"idx_mismatch={indices_diff_count}/{indices_total}")
+
+    # 如果有差异，打印详细信息
+    if not passed:
+        diff_positions = np.argwhere(pd_indices_np != torch_indices_np)
+        if len(diff_positions) > 0:
+            print(f"  Indices diff positions (first 5):")
+            for pos in diff_positions[:5]:
+                pos_tuple = tuple(pos)
+                print(f"    pos={pos_tuple}, paddle={pd_indices_np[pos_tuple]}, torch={torch_indices_np[pos_tuple]}")
+
+    results.append({
+        'Shape': str(shape),
+        'K': k,
+        'Dtype': dtype_str,
+        'Values_Max_Diff': f"{values_diff:.6f}",
+        'Values_Mean_Diff': f"{values_mean_diff:.6f}",
+        'Indices_Match': indices_match,
+        'Indices_Mismatch': f"{indices_diff_count}/{indices_total}",
+        'Status': status,
+    })
 
 
-def compare_paddle_torch():
-    """Direct comparison between Paddle and PyTorch topk results."""
-    try:
-        import paddle
-        import torch
-        
-        paddle.set_device('gpu')
-        torch.set_default_device('cuda')
-        
-        print("\n" + "=" * 60)
-        print("Direct Comparison: Paddle vs PyTorch TopK")
-        print("=" * 60)
-        
-        # Test with duplicates
-        np.random.seed(123)
-        test_cases = [
-            ("Small 1D with duplicates", np.array([1, 3, 2, 3, 3, 1, 2], dtype=np.float32), 5),
-            ("Medium 1D (KeMatrixTopK)", np.random.randint(0, 5, size=100).astype(np.float32), 10),
-            ("2D tensor axis=-1", np.array([[5, 3, 5, 1, 5], [2, 2, 2, 2, 1]], dtype=np.float32), 3),
+def save_results_to_csv(filename='topk_correctness_results.csv'):
+    """保存结果到 CSV 文件"""
+    if results:
+        fieldnames = [
+            'Shape', 'K', 'Dtype', 'Values_Max_Diff', 'Values_Mean_Diff',
+            'Indices_Match', 'Indices_Mismatch', 'Status'
         ]
-        
-        all_passed = True
-        for name, data, k in test_cases:
-            print(f"\n[{name}]")
-            
-            # Paddle
-            x_paddle = paddle.to_tensor(data)
-            if len(data.shape) == 1:
-                vals_paddle, inds_paddle = paddle.topk(x_paddle, k=k, largest=True, sorted=True)
-            else:
-                vals_paddle, inds_paddle = paddle.topk(x_paddle, k=k, axis=-1, largest=True, sorted=True)
-            vals_paddle = vals_paddle.numpy()
-            inds_paddle = inds_paddle.numpy()
-            
-            # PyTorch
-            x_torch = torch.tensor(data, device='cuda')
-            if len(data.shape) == 1:
-                vals_torch, inds_torch = torch.topk(x_torch, k=k, largest=True, sorted=True)
-            else:
-                vals_torch, inds_torch = torch.topk(x_torch, k=k, dim=-1, largest=True, sorted=True)
-            vals_torch = vals_torch.cpu().numpy()
-            inds_torch = inds_torch.cpu().numpy()
-            
-            values_match = np.allclose(vals_paddle, vals_torch)
-            indices_match = np.array_equal(inds_paddle, inds_torch)
-            
-            print(f"  Values match:  {values_match}")
-            print(f"  Indices match: {indices_match}")
-            
-            if not indices_match:
-                all_passed = False
-                print(f"  Paddle indices:  {inds_paddle}")
-                print(f"  PyTorch indices: {inds_torch}")
-        
-        print("\n" + "=" * 60)
-        if all_passed:
-            print("ALL TESTS PASSED! Paddle and PyTorch topk indices are aligned.")
-        else:
-            print("SOME TESTS FAILED! Indices are not fully aligned.")
-        print("=" * 60)
-        
-    except ImportError as e:
-        print(f"\nCannot run comparison: {e}")
+        with open(filename, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\n结果已保存至: {filename}")
 
 
 if __name__ == "__main__":
-    test_topk_with_paddle()
-    test_topk_with_torch()
-    compare_paddle_torch()
+    # 检查CUDA是否可用
+    if paddle.device.is_compiled_with_cuda() and torch.cuda.is_available():
+        print("CUDA可用，使用GPU进行测试")
+        paddle.set_device('gpu:2')
+        torch.cuda.set_device(2)
+    else:
+        print("警告: CUDA不可用或PyTorch未检测到CUDA")
+        if not paddle.device.is_compiled_with_cuda():
+            print("  - Paddle CUDA不可用")
+        if not torch.cuda.is_available():
+            print("  - PyTorch CUDA不可用")
+        exit(1)
+
+    # ============== 测试配置 ==============
+    shapes = [
+        # # 1D
+        # (10,),
+        # (128,),
+        # (1024,),
+        # (8192,),
+        # (65536,),
+        # (369303,),
+        # 2D: 小规模
+        (1, 16, 1),
+        (1, 20, 1),
+        (1, 32, 1),
+        (1, 64, 1),
+        (1, 128, 1),
+        (1, 256, 1),
+        (1, 512, 1),
+        (1, 1024, 1),
+        (1, 4096, 1),
+        (1, 8192, 1),
+        (1, 65536, 1),
+        (1, 369303, 1),
+        # 2D: 中等 batch
+        (4, 32, 1),
+        (4, 128, 1),
+        (4, 512, 1),
+        (4, 2048, 1),
+        (8, 64, 1),
+        (8, 128, 1),
+        (8, 256, 1),
+        (8, 1024, 1),
+        (16, 32, 1),
+        (16, 64, 1),
+        (16, 128, 1),
+        (16, 512, 1),
+        (16, 2048, 1),
+        (32, 64, 1),
+        (32, 128, 1),
+        (32, 256, 1),
+        (32, 1024, 1),
+        (64, 64, 1),
+        (64, 128, 1),
+        (64, 512, 1),
+        (128, 64, 1),
+        (128, 128, 1),
+        (128, 256, 1),
+        (256, 64, 1),
+        (256, 128, 1),
+        (256, 512, 1),
+        # 2D: 大 batch
+        (512, 128, 1),
+        (512, 512, 1),
+        (512, 8192, 1),
+        (1024, 128, 1),
+        (1024, 1024, 1),
+        (2048, 256, 1),
+        (4096, 512, 1),
+        (8192, 128, 1),
+        (8192, 1024, 1),
+        (16384, 512, 1),
+        (16384, 2048, 1),
+        (32768, 64, 1),
+        (32768, 128, 1),
+        (65536, 64, 1),
+        # 2D: 极端比例
+        (1, 1000000, 1),
+        (1000000, 2, 1),
+        (2, 131072, 1),
+        (131072, 2, 1),
+        # 2D: 非2的幂次（边界值）
+        (7, 13, 1),
+        (13, 37, 1),
+        (33, 65, 1),
+        (100, 100, 1),
+        (127, 127, 1),
+        (255, 257, 1),
+        (1000, 1000, 1),
+        (1023, 1025, 1),
+        (4095, 129, 1),
+        (8191, 63, 1),
+        # 3D
+        (2, 16, 64, 1),
+        (4, 32, 128, 1),
+        (8, 64, 256, 1),
+        (16, 128, 512, 1),
+        (2, 1024, 128, 1),
+        (4, 512, 1024, 1),
+        # 4D
+        (2, 4, 8, 64, 1),
+        (2, 4, 16, 128, 1),
+    ]
+
+    ks = [1, 2, 3, 4, 5, 7, 8, 10, 12, 16, 20, 24, 32, 50, 64, 128, 256]
+
+    dtypes = ['float32', 'float16', 'bfloat16', 'int32']
+
+    # 运行测试
+    print("=" * 100)
+    print("Paddle vs Torch topk 正确性测试")
+    print("=" * 100)
+
+    for shape in shapes:
+        for k in ks:
+            if k > shape[-1]:
+                continue
+            for dtype in dtypes:
+                try:
+                    test_correctness(shape, k, dtype)
+                except Exception as e:
+                    print(f"[ERROR] shape={shape}, k={k}, dtype={dtype}: {e}")
+
+    # 保存结果
+    save_results_to_csv()
+
+    # 打印汇总
+    total = len(results)
+    passed = sum(1 for r in results if r['Status'] == 'PASS')
+    failed = total - passed
+
+    print("\n" + "=" * 100)
+    print(f"测试汇总: 总计 {total} 项, 通过 {passed} 项, 失败 {failed} 项")
+    print("=" * 100)
+
+    if failed > 0:
+        print("\n失败项:")
+        print(f"{'Shape':<20} {'K':<6} {'Dtype':<10} {'Val_Max_Diff':<15} {'Idx_Mismatch':<15}")
+        print("-" * 70)
+        for r in results:
+            if r['Status'] == 'FAIL':
+                print(f"{r['Shape']:<20} {r['K']:<6} {r['Dtype']:<10} "
+                      f"{r['Values_Max_Diff']:<15} {r['Indices_Mismatch']:<15}")

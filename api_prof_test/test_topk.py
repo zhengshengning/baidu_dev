@@ -135,16 +135,18 @@ def save_results_to_csv(filename='topk_benchmark_results.csv'):
 
 
 if __name__ == "__main__":
-    # 检查 CUDA 是否可用
-    if not paddle.device.is_compiled_with_cuda():
-        print("错误: Paddle CUDA 不可用")
+    # 检查CUDA是否可用
+    if paddle.device.is_compiled_with_cuda() and torch.cuda.is_available():
+        print("CUDA可用，使用GPU进行测试")
+        paddle.set_device('gpu:2')
+        torch.cuda.set_device(2)
+    else:
+        print("警告: CUDA不可用或PyTorch未检测到CUDA")
+        if not paddle.device.is_compiled_with_cuda():
+            print("  - Paddle CUDA不可用")
+        if not torch.cuda.is_available():
+            print("  - PyTorch CUDA不可用")
         exit(1)
-    if not torch.cuda.is_available():
-        print("错误: PyTorch CUDA 不可用")
-        exit(1)
-    
-    print("CUDA 可用，使用 GPU 进行测试")
-    paddle.set_device('gpu:0')
     
     # ============== 测试配置 ==============
     # 不同的 shape 配置
