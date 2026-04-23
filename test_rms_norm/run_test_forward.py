@@ -48,7 +48,7 @@ def benchmark_paddle_vs_torch_layer_norm():
     batch_sizes = [200]
     hidden_sizes = [2048]
     seq_lens = [32]
-    dtypes = ['bfloat16']
+    dtypes = ['float32']
     # dtypes = ['bfloat16', 'float16', 'float32', 'float64']
     epsilon = 1e-5
     
@@ -127,6 +127,8 @@ def benchmark_paddle_vs_torch_layer_norm():
                         # === 精度对比 ===
                         y_paddle_np = y_paddle[0].astype('float32').numpy()
                         y_torch_np = y_torch.cpu().to(dtype=torch.float32).numpy()
+
+                        np.testing.assert_allclose(y_paddle_np, y_torch_np, rtol=0, atol=0)
                         # print("y_paddle_np = ", y_paddle_np)
                         # print("y_torch_np = ", y_torch_np)
                         
