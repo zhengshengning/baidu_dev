@@ -29,13 +29,17 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 # PIP_INDEX_URL=https://pypi.org/simple git commit -m "fix"
 
 # 【安装官网 paddle】
-# uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall
+# uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall --no-deps
 
 # docker exec -it ningzhengsheng_a100_80g_cuda129 bash
 # python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu126/ --force-reinstall
 
+# 【安装torch】
+# pip install torch==2.9.1 --force-reinstall --no-deps
 
-# LD_PRELOAD=/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/libcublasLt.so.12 timeout 180 python test.py
-
-
-# cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DWITH_GPU=ON -DWITH_SHARED_PHI=ON -DWITH_TENSORRT=ON -DWITH_OPENVINO=OFF -DWITH_ROCM=OFF -DWITH_CINN=ON -DWITH_DISTRIBUTE=ON -DWITH_MKL=OFF -DWITH_AVX=ON -DCUDA_ARCH_NAME=Manual -DNEW_RELEASE_PYPI=OFF -DNEW_RELEASE_ALL=OFF -DNEW_RELEASE_JIT=OFF -DWITH_PYTHON=ON -DWITH_TESTING=OFF -DWITH_COVERAGE=OFF -DWITH_INCREMENTAL_COVERAGE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DWITH_INFERENCE_API_TEST=OFF -DPY_VERSION=3.10 -DWITH_PSLIB= -DWITH_GLOO=ON -DWITH_XPU=OFF -DWITH_IPU=OFF -DXPU_SDK_ROOT= -DWITH_XPU_BKCL=OFF -DWITH_XPU_XHPC=OFF -DWITH_XPU_XFT=OFF -DWITH_XPU_XRE5=OFF -DWITH_XPU_FFT=OFF -DWITH_ARM=OFF -DWITH_STRIP=ON -DON_INFER=OFF -DCUDA_ARCH_BIN="80 90 100 103 120" -DWITH_RECORD_BUILDTIME=OFF -DWITH_UNITY_BUILD=OFF -DWITH_ONNXRUNTIME=OFF -DWITH_CUDNN_FRONTEND=OFF -DWITH_CPP_TEST=OFF -DWITH_FA_BUILD_WITH_CACHE=ON
+# 【单测运行】
+# export PYTHONPATH=/home/ningzhengsheng/src/Paddle/build/python:/home/ningzhengsheng/src/Paddle/test:/home/ningzhengsheng/src/Paddle/test/ir/pir/fused_pass
+# python -m paddle.distributed.launch --devices=0,1,2,3,4,5,6,7 xxx.py
+# FLAGS_PIR_OPTEST=1 FLAGS_PIR_OPTEST_WHITE_LIST=1   python test/legacy_test/test_fused_adam_op.py
+# 【起文件服务】
+# python -m updog -p 8124

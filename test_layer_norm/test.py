@@ -6,7 +6,7 @@ import numpy as np
 import paddle
 import torch
 
-# paddle.set_flags({'FLAGS_use_accuracy_compatible_kernel': 1})
+paddle.set_flags({'FLAGS_use_accuracy_compatible_kernel': 1})
 
 results = []
 
@@ -174,21 +174,29 @@ if __name__ == "__main__":
     script_dir = Path(__file__).resolve().parent
     shape_file = script_dir / "shape.txt"
     test_configs = load_test_configs(shape_file)
-    # dtypes = ['float32', 'float16', 'bfloat16']
-    dtypes = ['bfloat16']
+    dtypes = ['float32', 'float16', 'bfloat16']
+    # dtypes = ['bfloat16']
     
-    run_accuracy_check((24192, 1280), (1280,), "bfloat16")
+    # run_accuracy_check((17340, 1280), (1280,), "bfloat16")
+    # run_accuracy_check((16422, 1280), (1280,), "bfloat16")
+    # run_accuracy_check((18070, 1280), (1280,), "bfloat16")
+
+    # run_accuracy_check((18768, 1280), (1280,), "bfloat16")
+    # run_accuracy_check((16744, 1280), (1280,), "bfloat16")
+
+    # run_accuracy_check((17940, 1280), (1280,), "bfloat16")
+    # run_accuracy_check((5382, 1280), (1280,), "bfloat16")
 
 
-    # for shape, normalized_shape in test_configs:
-    #     for dtype in dtypes:
-    #         try:
-    #             run_accuracy_check(shape, normalized_shape, dtype)
-    #         except Exception as error:
-    #             print(f"测试失败: shape={shape}, normalized_shape={normalized_shape}, dtype={dtype}")
-    #             print(f"错误信息: {error}")
+    for shape, normalized_shape in test_configs:
+        for dtype in dtypes:
+            try:
+                run_accuracy_check(shape, normalized_shape, dtype)
+            except Exception as error:
+                print(f"测试失败: shape={shape}, normalized_shape={normalized_shape}, dtype={dtype}")
+                print(f"错误信息: {error}")
 
-    # save_results_to_csv()
+    save_results_to_csv()
 
     print("\n" + "="*180)
     print("精度测试汇总")
