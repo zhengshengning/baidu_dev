@@ -37,5 +37,14 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 
 # LD_PRELOAD=/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/libcublasLt.so.12 timeout 180 python test.py
 
+# 【传输文件 开启Http服务】
+# python -m updog -p 8124
 
+# 【Paddle编译命令】
 # cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DWITH_GPU=ON -DWITH_SHARED_PHI=ON -DWITH_TENSORRT=ON -DWITH_OPENVINO=OFF -DWITH_ROCM=OFF -DWITH_CINN=ON -DWITH_DISTRIBUTE=ON -DWITH_MKL=OFF -DWITH_AVX=ON -DCUDA_ARCH_NAME=Manual -DNEW_RELEASE_PYPI=OFF -DNEW_RELEASE_ALL=OFF -DNEW_RELEASE_JIT=OFF -DWITH_PYTHON=ON -DWITH_TESTING=OFF -DWITH_COVERAGE=OFF -DWITH_INCREMENTAL_COVERAGE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DWITH_INFERENCE_API_TEST=OFF -DPY_VERSION=3.10 -DWITH_PSLIB= -DWITH_GLOO=ON -DWITH_XPU=OFF -DWITH_IPU=OFF -DXPU_SDK_ROOT= -DWITH_XPU_BKCL=OFF -DWITH_XPU_XHPC=OFF -DWITH_XPU_XFT=OFF -DWITH_XPU_XRE5=OFF -DWITH_XPU_FFT=OFF -DWITH_ARM=OFF -DWITH_STRIP=ON -DON_INFER=OFF -DCUDA_ARCH_BIN="80 90 100 103 120" -DWITH_RECORD_BUILDTIME=OFF -DWITH_UNITY_BUILD=OFF -DWITH_ONNXRUNTIME=OFF -DWITH_CUDNN_FRONTEND=OFF -DWITH_CPP_TEST=OFF -DWITH_FA_BUILD_WITH_CACHE=ON
+
+
+# 【多机模型调试】
+# mpirun python -m pip install paddlepaddle_gpu-3.3.1.dev20260330-cp310-cp310-linux_x86_64.whl --no-deps --force-reinstall
+# python script/sync_new.py file script/train_gpu.sh
+# python script/sync_new.py file third_party/ernie-core/src/ernie_core/models/moe/moe_layer.py
