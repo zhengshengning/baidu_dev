@@ -29,11 +29,13 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 # PIP_INDEX_URL=https://pypi.org/simple git commit -m "fix"
 
 # 【安装官网 paddle】
-# uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall
+# uv pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --force-reinstall --no-deps
 
 # docker exec -it ningzhengsheng_a100_80g_cuda129 bash
 # python -m pip install --pre paddlepaddle-gpu -i https://www.paddlepaddle.org.cn/packages/nightly/cu126/ --force-reinstall
 
+# 【安装torch】
+# pip install torch==2.9.1 --force-reinstall --no-deps
 
 # LD_PRELOAD=/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/libcublasLt.so.12 timeout 180 python test.py
 
@@ -48,3 +50,12 @@ export PYTHONPATH=/root/paddlejob/share-storage/gpfs/system-public/ningzhengshen
 # mpirun python -m pip install paddlepaddle_gpu-3.3.1.dev20260330-cp310-cp310-linux_x86_64.whl --no-deps --force-reinstall
 # python script/sync_new.py file script/train_gpu.sh
 # python script/sync_new.py file third_party/ernie-core/src/ernie_core/models/moe/moe_layer.py
+
+# 【单测运行】
+# export PYTHONPATH=/home/ningzhengsheng/src/Paddle/build/python:/home/ningzhengsheng/src/Paddle/test:/home/ningzhengsheng/src/Paddle/test/ir/pir/fused_pass
+# python -m paddle.distributed.launch --devices=0,1,2,3,4,5,6,7 xxx.py
+# FLAGS_PIR_OPTEST=1 FLAGS_PIR_OPTEST_WHITE_LIST=1   python test/legacy_test/test_fused_adam_op.py
+
+# 【起文件服务】
+# python -m updog -p 8124
+
