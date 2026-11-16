@@ -1,0 +1,37 @@
+diff --git a/src/paddlefleet/optimizers/muon_optimizer.py b/src/paddlefleet/optimizers/muon_optimizer.py
+index 4b1aa9cf..0c4b2067 100644
+--- a/src/paddlefleet/optimizers/muon_optimizer.py
++++ b/src/paddlefleet/optimizers/muon_optimizer.py
+@@ -23,6 +23,7 @@ A from-scratch ``InnerOptimizer`` subclass (NOT a wrapper around
+ from __future__ import annotations
+ 
+ import math
++import os
+ from collections import defaultdict
+ 
+ import paddle
+@@ -195,7 +196,24 @@ class MuonOptimizer(InnerOptimizer):
+             muon_groups[(split_func_key(scf), param_shape)].append(
+                 (param, grad)
+             )
++        # Diagnostic-only stage1<->FSDP alignment (MUON_FSDP_NS_SINGLE=1, same as
++        # paddle.optimizer.Muon._muon_update_group): batched Newton-Schulz
++        # (stack/concat + baddbmm) depends on the batch composition, and stage1 /
++        # FSDP assign different param sets (and orders) to each owner rank.
++        # Update one param at a time so the result no longer depends on it.
++        ns_single = os.environ.get("MUON_FSDP_NS_SINGLE") == "1"
++        if ns_single and not getattr(self, "_ns_single_logged", False):
++            self._ns_single_logged = True
++            print(
++                f"[ALIGN] fleet {type(self).__name__}: per-param Newton-Schulz "
++                "(MUON_FSDP_NS_SINGLE) ACTIVE",
++                flush=True,
++            )
+         for grp in muon_groups.values():
++            if ns_single:
++                for item in grp:
++                    self._update_shape_group([item], lr)
++                continue
+             for sub_grp in self._split_group_by_bytes(grp):
+                 self._update_shape_group(sub_grp, lr)
+ 

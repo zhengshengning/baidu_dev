@@ -1,0 +1,2 @@
+[Errno 2] No such file or directory: '/root/paddlejob/paddlefleet-public/ningzhengsheng/FSDP/baidu/ernie/erniebot/solutions/ernie5_moe/config/eb5_a35b_768b_82k_ep32_zhli_v2_mtp.yaml'
+[Errno 2] No such file or directory: '/root/paddlejob/paddlefleet-public/ningzhengsheng/FSDP/baidu/ernie/erniebot/solutions/ernie5_moe/config/eb5_a35b_768b_82k_ep32_zhli_v2_mtp.yaml'

@@ -1,0 +1,331 @@
+diff --git a/python/paddle/distributed/fleet/meta_optimizers/muon_sharding_optimizer.py b/python/paddle/distributed/fleet/meta_optimizers/muon_sharding_optimizer.py
+index 60cd063ea4..8139ee512f 100644
+--- a/python/paddle/distributed/fleet/meta_optimizers/muon_sharding_optimizer.py
++++ b/python/paddle/distributed/fleet/meta_optimizers/muon_sharding_optimizer.py
+@@ -60,6 +60,7 @@ from paddle.distributed.fleet.utils.log_util import logger
+ from paddle.distributed.fleet.utils.tensor_fusion_helper import (
+     HOOK_ACTION,
+     FusedCommBuffer,
++    _muon_align_log,
+     assign_group_by_size,
+ )
+ 
+@@ -1260,6 +1261,7 @@ class MuonShardingOptimizer:
+ 
+     def _reduce_2d_grads(self, params, param2rank, comm_group):
+         """Reduce gradients for 2D params to their owner rank within comm_group."""
++        _bcast = os.environ.get("MUON_FSDP_BCAST_GRAD") == "1"
+         for param in params:
+             g_var = self._get_param_grad(param)
+             if g_var is None:
+@@ -1270,6 +1272,23 @@ class MuonShardingOptimizer:
+                     g_var = paddle.zeros_like(param, dtype=param.dtype)
+                     param.grad = g_var
+ 
++            if _bcast:
++                # Diagnostic alignment: broadcast rank0's local grad (÷nranks)
++                # instead of reduce-to-owner, matching the FSDP side (arithmetic-
++                # free, no shard-ownership dependence). See stage1_fsdp_align_hack.md.
++                _muon_align_log(
++                    "stage1_2d",
++                    "[MUON_FSDP_BCAST_GRAD] stage1: reduce_2d(owner) -> broadcast(src=0) ACTIVE",
++                )
++                g_var.scale_(1.0 / comm_group.nranks)
++                paddle.distributed.broadcast(
++                    g_var,
++                    src=comm_group.ranks[0],
++                    group=comm_group,
++                    sync_op=True,
++                )
++                continue
++
+             reduce_op = ReduceOp.AVG
+             if not self.use_reduce_avg:
+                 nranks = comm_group.nranks
+diff --git a/python/paddle/distributed/fleet/utils/tensor_fusion_helper.py b/python/paddle/distributed/fleet/utils/tensor_fusion_helper.py
+index 5b24ac46ec..7167f88c96 100644
+--- a/python/paddle/distributed/fleet/utils/tensor_fusion_helper.py
++++ b/python/paddle/distributed/fleet/utils/tensor_fusion_helper.py
+@@ -31,6 +31,21 @@ from paddle.utils import strtobool
+ from .log_util import logger
+ 
+ 
++# --- diagnostic-only: stage1 <-> FSDP bitwise alignment hack (see stage1_fsdp_align_hack.md) ---
++_MUON_ALIGN_LOGGED = set()
++
++
++def _muon_align_log(tag, msg):
++    if tag in _MUON_ALIGN_LOGGED:
++        return
++    _MUON_ALIGN_LOGGED.add(tag)
++    try:
++        if paddle.distributed.get_rank() == 0:
++            logger.info(msg)
++    except Exception:
++        logger.info(msg)
++
++
+ def _share_tensor_ipc_meta(tensor):
+     if tensor is None:
+         return None
+@@ -482,6 +497,10 @@ class FusedCommBuffer:
+         self._use_reduce_avg = use_reduce_avg
+         self._free_grads_in_comm = free_grads_in_comm
+         self._log_message_printed = False
++        # Diagnostic-only stage1<->FSDP alignment: guard against double 1/nranks
++        # scaling when reduce_scatter is replaced by broadcast (see
++        # stage1_fsdp_align_hack.md). Gated by MUON_FSDP_BCAST_GRAD.
++        self._bcast_scale_applied = False
+ 
+         self.status = FusedCommBuffer.Status.READY
+         self.sync_param_task = None
+@@ -800,7 +819,8 @@ class FusedCommBuffer:
+             else paddle.distributed.ReduceOp.SUM
+         )
+         # scale will be skipped when reduce_avg comm operation is enabled.
+-        if not self._scale_after_comm and not self._use_reduce_avg:
++        _bcast = os.environ.get("MUON_FSDP_BCAST_GRAD") == "1"
++        if not _bcast and not self._scale_after_comm and not self._use_reduce_avg:
+             scale_factor = 1.0 / self._comm_group.nranks
+             self.grad_storage.scale_(scale_factor)
+ 
+@@ -821,6 +841,24 @@ class FusedCommBuffer:
+             )
+ 
+         elif self._act == HOOK_ACTION.REDUCE:
++            if _bcast:
++                # Diagnostic alignment: replace reduce-to-owner with an
++                # arithmetic-free broadcast(src=rank0) + 1/nranks, matching the
++                # FSDP side (used by the fused 2D Muon path).
++                _muon_align_log(
++                    "stage1_reduce",
++                    "[MUON_FSDP_BCAST_GRAD] stage1: reduce(owner) -> broadcast(src=0) ACTIVE",
++                )
++                self.grad_storage.scale_(1.0 / self._comm_group.nranks)
++                self._bcast_scale_applied = True
++                task = paddle.distributed.broadcast(
++                    self.grad_storage,
++                    src=self._comm_group.ranks[0],
++                    group=self._comm_group,
++                    sync_op=False,
++                )
++                self._task = task
++                return
+             task = paddle.distributed.reduce(
+                 self.grad_storage,
+                 dst=self._dst,
+@@ -830,6 +868,25 @@ class FusedCommBuffer:
+             )
+ 
+         elif self._act == HOOK_ACTION.REDUCE_SCATTER:
++            if _bcast:
++                # Diagnostic alignment: replace reduce_scatter with an
++                # arithmetic-free broadcast(src=rank0). AVG/SUM no longer divides,
++                # so apply 1/nranks here to match FSDP's grad_scale on the other
++                # side (this is the most easily-missed step of the hack).
++                _muon_align_log(
++                    "stage1_rs",
++                    "[MUON_FSDP_BCAST_GRAD] stage1: reduce_scatter -> broadcast(src=0) ACTIVE",
++                )
++                self.grad_storage.scale_(1.0 / self._comm_group.nranks)
++                self._bcast_scale_applied = True
++                task = paddle.distributed.broadcast(
++                    self.grad_storage,
++                    src=self._comm_group.ranks[0],
++                    group=self._comm_group,
++                    sync_op=False,
++                )
++                self._task = task
++                return
+             # In align mode, we scale the grad in advance, so we need a SUM head
+             if paddle.distributed.in_auto_parallel_align_mode():
+                 reduce_op = paddle.distributed.ReduceOp.SUM
+@@ -864,7 +921,11 @@ class FusedCommBuffer:
+             self._task.wait()
+ 
+             # scale will be skipped when use reduce_avg comm operation
+-            if self._scale_after_comm and not self._use_reduce_avg:
++            if (
++                self._scale_after_comm
++                and not self._use_reduce_avg
++                and not self._bcast_scale_applied
++            ):
+                 scale_factor = 1.0 / self._comm_group.nranks
+                 self.grad_storage.scale_(scale_factor)
+ 
+diff --git a/python/paddle/distributed/fsdp/fully_shard_fusion.py b/python/paddle/distributed/fsdp/fully_shard_fusion.py
+index 7b7daca8b9..b5e5b90e64 100644
+--- a/python/paddle/distributed/fsdp/fully_shard_fusion.py
++++ b/python/paddle/distributed/fsdp/fully_shard_fusion.py
+@@ -14,6 +14,7 @@
+ 
+ import contextlib
+ import math
++import os
+ import re
+ from collections import Counter, OrderedDict
+ from dataclasses import dataclass, field
+@@ -45,6 +46,20 @@ from paddle.distributed.fsdp._fsdp_context import (
+     register_fsdp_context,
+ )
+ 
++# Diagnostic only (stage1 <-> FSDP bitwise alignment), default off.
++_MUON_ALIGN_LOGGED = set()
++
++
++def _muon_align_log(tag, msg):
++    if tag in _MUON_ALIGN_LOGGED:
++        return
++    _MUON_ALIGN_LOGGED.add(tag)
++    try:
++        if paddle.distributed.get_rank() == 0:
++            print(msg, flush=True)
++    except Exception:
++        print(msg, flush=True)
++
+ 
+ class StreamTask:
+     def __init__(self, stream):
+@@ -355,6 +370,34 @@ class TensorFusionBuffer:
+ 
+     def do_reduce_scatter(self):
+         tmp_buffer = self.get_tmp_buffer()
++        if os.environ.get("MUON_FSDP_BCAST_GRAD") == "1":
++            # Diagnostic alignment: replace reduce_scatter with an arithmetic-free
++            # broadcast(src=rank0) so stage1/FSDP both see rank0's local grad
++            # (no reduce rounding, no shard-ownership dependence). grad_scale is
++            # deferred to finish_grads_sync, i.e. (sum g_i) * s like stage1.
++            _muon_align_log(
++                "fsdp_rs",
++                "[MUON_FSDP_BCAST_GRAD] FSDP:   reduce_scatter -> broadcast(src=0) ACTIVE",
++            )
++            self.grad_scale_pending = self.grad_scale != 1.0
++            paddle.distributed.broadcast(
++                tmp_buffer,
++                src=self.fsdp_group.ranks[0],
++                group=self.fsdp_group,
++                sync_op=True,
++            )
++            # Move this rank's shard to the buffer head, where reduce_scatter
++            # would have put it.
++            shard_size = self.data_buffer.shape[0]
++            if self.shard_start:
++                paddle.assign(
++                    tmp_buffer._slice(
++                        self.shard_start, self.shard_start + shard_size
++                    ),
++                    tmp_buffer._slice(0, shard_size),
++                )
++            self._rs_comm_buffer = tmp_buffer
++            return TensorFusionBuffer._CompletedTask()
+         # AVG folds the scale into NCCL when it is exactly 1/nranks of this
+         # group. Otherwise SUM; fp32 defers the scale to the reduced shard in
+         # finish_grads_sync, other dtypes pre-scale the full buffer.
+@@ -1362,23 +1405,43 @@ class FSDPCommManager:
+             group.grads_use_cnt = 0
+             group.grads_ready_cnt = 0
+             if not grads_buffer.is_sharded:
+-                if group.whole_shard_numel is not None:
+-                    paddle.distributed.all_reduce(
++                _bcast = os.environ.get("MUON_FSDP_BCAST_GRAD") == "1"
++                if _bcast and (
++                    group.whole_shard_numel is not None
++                    or group.whole_owner_rank is not None
++                ):
++                    # Diagnostic alignment: arithmetic-free broadcast(src=rank0)
++                    # instead of all_reduce / reduce(owner).
++                    _muon_align_log(
++                        "fsdp_reduce",
++                        "[MUON_FSDP_BCAST_GRAD] FSDP:   reduce(owner) -> broadcast(src=0) ACTIVE",
++                    )
++                    paddle.distributed.broadcast(
+                         grads_buffer.data_buffer,
+-                        op=paddle.distributed.ReduceOp.SUM,
++                        src=grads_buffer.fsdp_group.ranks[0],
+                         group=grads_buffer.fsdp_group,
+                         sync_op=True,
+                     )
+-                elif group.whole_owner_rank is not None:
+-                    paddle.distributed.reduce(
++                if _bcast and group.whole_shard_numel is not None:
++                    pass
++                elif group.whole_shard_numel is not None:
++                    paddle.distributed.all_reduce(
+                         grads_buffer.data_buffer,
+-                        dst=grads_buffer.fsdp_group.ranks[
+-                            group.whole_owner_rank
+-                        ],
+                         op=paddle.distributed.ReduceOp.SUM,
+                         group=grads_buffer.fsdp_group,
+                         sync_op=True,
+                     )
++                elif group.whole_owner_rank is not None:
++                    if not _bcast:
++                        paddle.distributed.reduce(
++                            grads_buffer.data_buffer,
++                            dst=grads_buffer.fsdp_group.ranks[
++                                group.whole_owner_rank
++                            ],
++                            op=paddle.distributed.ReduceOp.SUM,
++                            group=grads_buffer.fsdp_group,
++                            sync_op=True,
++                        )
+                     if (
+                         grads_buffer.fsdp_group.ranks[group.whole_owner_rank]
+                         != paddle.distributed.get_rank()
+@@ -2300,6 +2363,23 @@ class FullyShardFusion:
+                 # rounding matches the non-FSDP per-call main_grad.add_.
+                 if not isinstance(fp32_grad, (list, tuple)):
+                     fp32_grad = [fp32_grad]
++                # Diagnostic only (MUON_FSDP_BCAST_GRAD=1): flush all but the
++                # last component through the accumulator one by one, so the
++                # rounding is (acc + a) + b like non-FSDP instead of acc + (a + b).
++                fusion_buf = getattr(param, "_fusion_buffer", None)
++                if (
++                    len(fp32_grad) > 1
++                    and os.environ.get("MUON_FSDP_BCAST_GRAD") == "1"
++                    and fusion_buf is not None
++                    and fusion_buf.is_sharded
++                ):
++                    for g in fp32_grad[:-1]:
++                        param.get_main_grad(g.shape)
++                        param.main_grad.add_(g)
++                        fusion_buf.do_reduce_scatter()
++                        fusion_buf.accumulate_reduced_grad()
++                        param.main_grad = None
++                    fp32_grad = fp32_grad[-1:]
+                 param.get_main_grad(fp32_grad[0].shape)
+                 for g in fp32_grad:
+                     param.main_grad.add_(g)
+diff --git a/python/paddle/optimizer/muon.py b/python/paddle/optimizer/muon.py
+index 1b4b84aa5f..255c36f980 100644
+--- a/python/paddle/optimizer/muon.py
++++ b/python/paddle/optimizer/muon.py
+@@ -925,6 +925,27 @@ class Muon(Optimizer):
+         version,
+     ):
+         """Batched Muon update for a group of parameters with identical shape and split_concat_func."""
++        # Diagnostic-only stage1<->FSDP alignment: batched Newton-Schulz
++        # (paddle.stack + baddbmm) is not per-matrix independent, so ranks that
++        # own different batch subsets diverge. Recurse into single-matrix updates
++        # (paddle.addmm) so the batch composition no longer affects the result.
++        # Gated by MUON_FSDP_NS_SINGLE; see stage1_fsdp_align_hack.md.
++        if (
++            os.environ.get("MUON_FSDP_NS_SINGLE") == "1"
++            and len(group_params_grads) > 1
++        ):
++            for _item in group_params_grads:
++                self._muon_update_group(
++                    [_item],
++                    lr,
++                    momentum_beta,
++                    ns_steps,
++                    nesterov,
++                    epsilon,
++                    weight_decay,
++                    version,
++                )
++            return
+         # Because shape is identical, use the first param's properties
+         param0, _ = group_params_grads[0]
+         param_shape = getattr(param0, "original_shape", param0.shape)

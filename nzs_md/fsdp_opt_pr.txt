@@ -1,0 +1,8 @@
+[FSDP] Optimize FSDP Performance：https://github.com/PaddlePaddle/Paddle/pull/79881
+[FSDP] Add reshard_policy and reshard_filter：https://github.com/PaddlePaddle/Paddle/pull/79887
+[FSDP] Optimize FSDP Performance with fp8 param gather：https://github.com/PaddlePaddle/Paddle/pull/79897 https://github.com/PaddlePaddle/PaddleFleet/pull/2371
+[FSDP] Optimize FSDP Comm Stream：https://github.com/PaddlePaddle/Paddle/pull/79898
+[FSDP] Add FSDP reduce_scatter dtype：https://github.com/PaddlePaddle/Paddle/pull/79899
+[FSDP] Support prefetch by size in FullyShardFusion：https://github.com/PaddlePaddle/Paddle/pull/79901
+[FSDP] Supp FSDP sync_grads_each_microbatch：https://github.com/PaddlePaddle/Paddle/pull/79903
+
