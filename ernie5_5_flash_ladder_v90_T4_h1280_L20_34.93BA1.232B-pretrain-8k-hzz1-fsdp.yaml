@@ -1,0 +1,377 @@
+# Scaling Ladder V9.1 T4：h1280 / L20（15 SWA + 5 full，全 MLA nope192+rope64/v256/kv_lora 512，SWA:full 3:1 每 4 层成组，window 128，sink bias，无 MTP）/ 20 heads / q_lora 512 / 768 选 12 / latent 640 / Expert FFN 1152（1.80·latent，shared 同）/ 无 dense 层（first_k_dense_replace 0，intermediate_size 4480 占位）
+# 去掉：第 1 层 dense FFN（全 MoE）/ mHC / MTP（2026-09-23 按算法侧要求去掉，model_config num_nextn_predict_layers=0）/ multimax / LoRA-rank gated attention / MoE 层 learnable scalar / multi-router / VHA / HCA；优化器 MuonH / AdamW / AdamH（分组见 optimizer_config）+ QB（topk_method quantile_balancing，moe_router_load_balancing_type none，无 aux loss）
+# Total 34.93B / Active 1.232B / actNE 0.975B；D = 2.06T tokens（ρ0 = 2112）；C = 1.20e+22；LR 4.21e-03、global_batch 768 条×8192、max_steps 327328、WSD warmup 750 / stable 293845 / decay 32733
+# 蓝本：ernie5_5_flash-pretrain-8k-bzz3-layer43_mla_hca.yaml（ernie5_5_flash_43层_0828），改 model_name_or_path / output_dir / global_batch_size / max_steps / learning_rate / lr_scheduler / recompute_modules，注释掉 mhc / csa / dsv4 开关，关闭 MTP；并行度已按档位配置
+#
+# 卡数区间：
+#   - **推荐卡数 = 最小可跑卡数 = 16 卡** = pp2 × dp8
+#     （ep >= 8 且 ep 必须整除 dp ⇒ dp >= 8 ⇒ 卡数 >= pp × 8）；mb2 需配 fuse_optimizer_states=false 才装得下。
+#   - **8 卡不可行**（8 卡上 pp 只能是 1：pp2 ⇒ dp4，ep8 除不尽）。
+#   - 卡数上限 = gbs/mb × pp = 384 × 2，远超实际可用规模，不是约束。
+#   - 往上扩只改 ga：dp = 卡数/2 ⇒ ga = 768/(2×dp)。
+#     但 ga 同时是 pp 的流水线深度来源，ga 过小会抬高气泡占比，那时更合理的是同时加大 pp 而不是纯扩 dp。
+#   - ga 不能省：不写时默认 1，同样撞 pretraining_trainer.py:2008 的检查而 raise。
+#   - 卡数 → ga 对照（mb2）：
+#       16 卡 ⇒ dp8 ⇒ ga 48
+#       32 卡 ⇒ dp16 ⇒ ga 24
+#       64 卡 ⇒ dp32 ⇒ ga 12
+#       128 卡 ⇒ dp64 ⇒ ga 6
+#       256 卡 ⇒ dp128 ⇒ ga 3
+
+# -----------环境变量----------------------#
+
+# ---------------------------model args-------------------------------------------------#
+tokenizer_name: /root/afs_ro/cnn-bd-main.afs.baidu.com/user/erine/shangjunyuan/hub/ernie5_tk_m102k_vid6p1/
+is_eb5: true
+max_seq_length: 8192
+num_consecutive: 1
+shuffle_consecutive: false
+online_generate_data: true
+sync_down: true
+multi_process: 10
+load_process_num: 3
+lru_h5_cache_num: 1000
+dataset_meta_cache_path: ./dataset_cache_meta.bin
+bos_retry_max_time: 5
+bos_retry_interval: 1
+
+data_filelist: conf/allinone/eb5/EB5Pretrain-260803-a1b-v19p8-bfd-8k.zy
+data_weights: conf/allinone/eb5/EB5Pretrain-260803-a1b-v19p8-bfd-8k.ratio
+
+model_name_or_path: ./model_config/ERNIE-5.5-Flash/ScalingLadder/ernie5_5_flash_ladder_v90_T4_h1280_L20
+
+# flashmask_use_varlen: True
+_attn_implementation: flashmask
+use_ue8m0: false # 蓝本 true；H 卡(SM90) 上 moe_layer.py:557 硬 assert 要求 Blackwell，不关起不来
+
+document_mask_prob_text: 0.5 # 文本使用document mask 概率
+
+num_empty_layers_add_in_head: 0
+num_empty_layers_add_in_tail: 0
+moe_router_force_load_balancing: true
+
+moe_dequant_input: true
+
+offline_quant_expert_weight: true
+using_cache_weight_quant_transpose: false
+
+moe_topk_fusion: true
+routing_map_fusion: true
+moe_expert_fusion: true
+fp32_residual_connection: false
+# V9.0 去掉（结构已无 mHC / HCA-CSA / DSV4）：use_fused_mhc: true
+# V9.0 去掉（结构已无 mHC / HCA-CSA / DSV4）：mhc_single_stream_init: true
+moe_router_bias_update_rate: 1e-3 # 蓝本值保留；本配置 topk_method=quantile_balancing（QB），bias 由 MoEQuantileBalancingCallback 按分位数直接赋值，此参数不生效（只对 noaux_tc 的 sign 更新有效）
+bias_dropout_fusion: true
+
+moe_shared_expert_overlap: true
+bias_activation_fusion: true
+layer_types:
+moe_logging: false # 免费项：关每步 MoE 日志
+
+separate_mtp_headloss: false
+fused_linear_ce_loss_chunk: 24
+
+# recompute_granularity: full
+# recompute_method: uniform
+# recompute_num_layers: 1
+recompute_granularity: selective
+recompute_modules: {full_attn: all, moe_gate_up: all, mlp: [0, 1, 2, 3, 4, 5]}
+
+situ_glu_fusion: true
+
+# 暂不支持cp 关闭
+apply_rope_fusion: true
+sigmoid_gate_fusion: true
+
+deepep_buffer_configs:
+  num_sms: 120
+
+separate_mtp_input: false # MTP 已关闭
+# V9.0 去掉（结构已无 mHC / HCA-CSA / DSV4）：csa_share_docmask_meta: true
+
+# 参数初始化
+embedding_init_method_std: 0.006
+init_method_std: 0.006
+
+gpt_model_use_experimental_version: false
+mtp_loss_scaling_factor: 0.3 # MTP 已关闭，此项不参与 loss
+add_mtp_loss: false
+use_truncated_normal_init: true
+# V9.0 去掉（结构已无 mHC / HCA-CSA / DSV4）：csa_indexer_backend: tilelang
+# V9.0 去掉（结构已无 mHC / HCA-CSA / DSV4）：csa_sparse_attn_backend: cudnn
+
+#################### 多模相关占位 Start
+use_utf16be_and_eb5tk: true # 是否使用102400 新eb5词表以及utf16be编码
+use_v2_tokenizer_and_bypass_mm: true # 使用v2 tokenizer并跳过多模态token解析
+mtp_attention_flexible: true # MTP 已关闭，保留蓝本默认值
+reweight_loss_by_scale: true
+scale_accumulate_embedding: true
+scale_type_embedding: false
+reweight_ratios: [1.5, 1]
+
+visual_tknz_config: ./third_party/baidu/personal-code/tokenizer-core/config_3d_64bit.yaml # new tknz for formal training
+visual_tknz_ckpt: ./64bit.ckpt # ./epoch=0-step=990000.ckpt # !!LXX!!
+
+image_patch_id: 500000
+image_gen_patch_id: 500000
+image_vocab_size: 2**64  # 2**128
+image_code_depth: 1
+image_head_indices: [10] # 蓝本 [20]；L=20 时须 < num_hidden_layers，取 L//2
+image_share_vocab: true
+
+image_infinity: true
+infinity_scale_num: 64
+image_full_feature_size: 1536
+image_feature_size: 64
+image_sub_vocab_loss_mode: "sum"
+vision_cnn_size: 256
+vision_vit_size: 1280
+num_merge_attn_heads: 16
+vision_und_skip_first_scale: true
+
+random_flip_max_prob: 0.3
+
+split_understanding_generation: true
+image_max_merge_size: 2
+ignore_image_loss: true  # 理解任务不算图像Loss
+ignore_stem_loss: true # 生成任务不算文本Loss
+
+# video_patch_id: 500000
+video_patch_id: 500000
+video_gen_patch_id: 500000
+video_vocab_size: 2**64  # 2**128
+video_code_depth: 1
+video_head_indices: [10] # 蓝本 [20]；L=20 时须 < num_hidden_layers，取 L//2
+# video_head_indices: [31]
+video_share_vocab: true
+
+video_infinity: true
+video_infinity_scale_num: 64
+video_full_feature_size: 1536
+video_feature_size: 64
+video_sub_vocab_loss_mode: "sum"
+
+image_und_resolution: 2048
+video_und_resolution: 512
+video_merge_4in1: true
+video_und_skip_first_scale: true
+
+audio_patch_id: 500000
+audio_vocab_size: 2056
+audio_code_depth: 1
+audio_share_vocab: false
+audio_spk_patch_id: 500000
+audio_spk_emb_dim: 192
+
+audio_head_indices: [0]
+# audio_loss_reweight: "tail_mask"  # 20250627上线
+audio_loss_reweight: "loss_scale_decay" # 20250710上线
+
+
+# ---------------------------trainer args-------------------------------------------------#
+save_hf_memory_growth_threshold: 4
+#online_merge_ema: true
+# 基础训练配置
+do_train: true
+seed: 42
+
+# 数据加载
+per_device_train_batch_size: 3 # 抬 mb 放大 grouped GEMM 的 m 维；ga 减半配平，gbs 不变
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 16 # = gbs/(mb×dp) = 768/(2×8)，pp2 ⇒ dp8
+dataloader_num_workers: 8
+prefetch_factor: 100
+max_workers: 12
+
+# V9.0 去掉（结构已无 mHC / HCA-CSA / DSV4）：dsv4_q_rms_norm_fusion: true
+
+
+# PDC相关
+pdc_download_ckpt: false
+pdc_download_timeout: 300
+save_tokenizer: true
+tokenizer_path: /root/afs_ro/xh-bj-liuli.afs.baidu.com/user/ernie/chenzhiyang02/ernie5_tk_m200k_v2p1_chatv2
+save_rng_states: true
+flash_device_save_steps: 0 # 硬依赖 enable_zero_cost_checkpoint，下面关了 ZCC ⇒ 必须置 0
+
+# Flash保存相关
+enable_zero_cost_checkpoint: false # 硬依赖 fuse_optimizer_states=true，下面关了融合缓冲 ⇒ 必须一起关，checkpoint 退回同步落盘
+replicate_saved_into_local: true
+ignore_data_skip: 0
+zcc_workers_num: 1
+zcc_pipeline_hooks_capacity_usage: 0.8
+#zcc_save_ema_coef: 0.991285
+#zcc_ema_interval: 50
+#zcc_ema_loss_threshold: 2
+
+# 续训时用 fp32 master weight 重建 bf16 参数：2D（每张卡独占整个参数）那批全程留在显存里
+# all_gather，结果直接写进对应的 bf16 参数，不再经主机中转。1D 是融合缓冲区的按元素切片，
+# ShardingV2 必须先在主机上重分派+拼接，不受此开关影响。关掉即回到原来的全主机路径。
+reshard_master_weight_device_gather: true
+
+# 训练步数和日志
+max_steps: 327328 # = D 2.06T / (768×8192)（蓝本 1000000）
+save_steps: 400
+save_hf_steps: 800
+logging_steps: 1
+record_data_source_loss: true
+data_source_loss_dump_steps: 200
+
+# 弹性层
+use_elastic_layer: false
+use_elastic_native_layer: false
+use_pp_balance_elastic_layer: false
+
+
+
+# 输出和保存
+output_dir: ./output/ladder_v90_T4_h1280_L20_pretrain8k
+# logging_dir: ./vdl_log
+metrics_output_path: ./output/paddle_distributed_logs/
+save_total_limit: 5
+save_checkpoint_format: flex_checkpoint
+load_checkpoint_format: flex_checkpoint
+flex_ckpt_comm_method: parallel_broadcast
+load_via_cpu: false
+overwrite_output_dir: 1
+ignore_load_lr_and_optim: false
+sharded_model_from_ema: false
+load_sharded_model: false
+save_sharded_model: false
+
+# 混合精度和损失缩放
+bf16: true
+fp16_opt_level: O2
+scale_loss: 4096
+amp_master_grad: true
+
+
+
+
+# debug_reeao_dataset_world_size: 5000 # 模拟真实 sharding 路数,用于单路调试,加速数据加载
+# 分布式并行配置
+tensor_model_parallel_size: 1
+expert_model_parallel_size: 8 # 蓝本 64
+pipeline_model_parallel_size: 1
+#virtual_pipeline_model_parallel_size: 6
+context_parallel_size: 1
+
+
+# 分片配置
+# sharding: stage1
+# split_param: true
+sharding: fsdp
+# Paddle PR 79887：gather 出的全量参数留到 optimizer step 前才释放，每层每 step 只 all_gather 一次（默认每个 micro-batch 都要重新 gather）
+# expert 走 fp8 buffer，默认就留到本层 backward 结束，after_step 不抬峰值；dense 实测 +1.26GB，预估峰值约 72.2GB
+# fsdp_reshard_policy: after_step # after_forward（默认）| after_backward | after_step
+# fsdp_reshard_filter: all # all | expert | dense
+fuse_optimizer_states: false # 调优：它要一整块约 17.6GiB 的连续缓冲放融合后的优化器态，mb2 下申请不到而 OOM；关掉即解，吞吐代价为 0
+
+# Pipeline 并行配置
+pp_delay_scale_loss: true
+pp_sync_moment: true
+pp_sync_param: true
+sync_grad: true
+
+overlap_p2p_comm: true
+variable_seq_lengths: true
+best_unbalanced_scheduler: true
+
+# Tensor 并行配置
+tp_sync_param: true
+tp_sync_moment: true
+
+# MoE 配置
+use_moe: true
+use_expert_parallel: true
+
+# 其他优化配置
+hybrid_parallel_topo_order: sharding_first
+skip_profile_timer: false
+# 实测不采用：mb2 装不下的原因是 fuse_optimizer_states 的连续缓冲，关掉它即可，无需 offload；开了反而净亏 4.9%
+#tensorwise_offload_optimizer: true
+
+# fuse_rms_norm: true
+
+offload_pipeline_dataset: false
+enable_aadiff_online_check: false
+
+log_global_grad_norm: true
+enable_global_training_logs: false
+model_backend: "fleet"
+# log_input_md5: true
+shard_smooth_alpha: 1
+same_data: ''
+enable_mtp_magic_send: false
+use_gpu_affinity: true
+global_logging_interval: 20
+pre_alloc_memory: 65 # 蓝本 200 > 单卡容量，pretrain.py:1147 会静默跳过；H 卡(80G) 取 65 才真正生效
+pre_alloc_pin_memory: 0.5
+
+sharding_comm_buffer_size_MB: 8192 #2048
+# sharding_comm_group_call_opt: True
+
+# 内科监控
+internal_medicine_monitor_interval: 400 # save_step 的整数倍
+# internal_medicine_monitors: qk_stats,massive_act,mhc_health
+# ===================== 优化器配置（MuonH 骨干 + AdamW embedding/router/norm/sink + AdamH lm_head）=====================
+# params 正则须覆盖每个参数恰好一次；漏配或重叠都会报错。
+# muonh/adamh 用 Hyperball 约束替代 WD（不施加衰减），weight_decay 写 0。
+# 各组可分别设置 optimizer / learning_rate / weight_decay / 调度 / 优化器超参；max_grad_norm 须各组一致。
+# 各组 learning_rate 均为本档 η，未施加额外的分组学习率倍率。
+# η 沿用原配置标注的 AdamW-fit Step Law 初值，Hyperball 下仍需校准。
+# 原配置公式：η ≈ 1.79×N^-0.713×D^0.307（N=actNE 参数个数，D=训练 token 个数）；仓库未附原始拟合记录。
+use_mixed_optimizer: true  # optimizer_config（param-group 形式）必须为 true
+optimizer_config:
+  - params: "(q_a_proj|q_b_proj|kv_a_proj_with_mqa|kv_b_proj|o_proj|fc1_latent_proj|fc2_latent_proj|grouped_gemm_experts|down_proj|up_gate_proj|eh_proj)"
+    optimizer: muonh
+    learning_rate: 4.21e-3       # 本档 η（沿用原值，Hyperball 下仍需校准）
+    weight_decay: 0                 # Hyperball 替代 WD
+    lr_scheduler: wsd:294595
+    warmup_steps: 750
+    min_lr: 0
+    max_grad_norm: 1.0
+    momentum: 0.95
+    version: 3
+    ns_steps: 5
+    ns_coeff_type: "quintic"
+    extra_scale_factor: 0.2
+    qkv_update_mode: "split_head"
+    ffn_split: true
+    epsilon: 1e-15               # muon_epsilon（NS 正交化）
+  - params: "(embed|mlp\\.gate)"
+    optimizer: adamw              # 2D 可衰减参数（embed / mlp.gate）：衰减量级 = 本组 weight_decay
+    learning_rate: 4.21e-3       # 本档 η（沿用原值）
+    weight_decay: 0.1
+    lr_scheduler: wsd:294595
+    warmup_steps: 750
+    min_lr: 0
+    max_grad_norm: 1.0
+    beta1: 0.9
+    beta2: 0.95
+    epsilon: 1e-15               # adam_epsilon
+  - params: "(norm|softmax_offset)"
+    optimizer: adamw              # 1D / 不衰减参数（norm / softmax_offset）：本组 weight_decay=0
+    learning_rate: 4.21e-3       # 本档 η（沿用原值）
+    weight_decay: 0
+    lr_scheduler: wsd:294595
+    warmup_steps: 750
+    min_lr: 0
+    max_grad_norm: 1.0
+    beta1: 0.9
+    beta2: 0.95
+    epsilon: 1e-15               # adam_epsilon
+  - params: "(lm_head)"
+    optimizer: adamh              # AdamW 方向 + Hyperball 球面约束（lm_head 2D）
+    learning_rate: 4.21e-3       # = η
+    weight_decay: 0               # adamh 不衰减（Hyperball 替代 WD）
+    lr_scheduler: wsd:294595
+    warmup_steps: 750
+    min_lr: 0
+    max_grad_norm: 1.0
+    beta1: 0.9
+    beta2: 0.95
+    epsilon: 1e-15               # adam_epsilon
+
+# moe_ep_barrier_async: false
