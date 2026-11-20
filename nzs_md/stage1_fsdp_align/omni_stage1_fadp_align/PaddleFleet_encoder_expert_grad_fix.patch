@@ -1,0 +1,108 @@
+commit 630b660ea257e82477ea981ee225d96e00bbd371
+Author: zhengshengning <ningzhengsheng@baidu.com>
+Date:   Thu Nov 19 20:50:24 2026 +0800
+
+    fsdp_support_onim
+
+diff --git a/src/paddlefleet/transformer/moe/fusion_layer_utils.py b/src/paddlefleet/transformer/moe/fusion_layer_utils.py
+index 7fe356e6..29e2dbcd 100644
+--- a/src/paddlefleet/transformer/moe/fusion_layer_utils.py
++++ b/src/paddlefleet/transformer/moe/fusion_layer_utils.py
+@@ -905,12 +905,68 @@ class MlpNode:
+ 
+     # ==================== forward methods ====================
+ 
++    @staticmethod
++    def _bind_fsdp_main_grad(weight):
++        """Point ``weight.main_grad`` at its FSDP grads-buffer slot, if FSDP owns it.
++
++        The fused expert backward writes wgrad straight into ``main_grad`` and
++        never returns it through autograd, so FSDP's grad hook does not fire for
++        it. FSDP binds ``main_grad`` itself only for ``is_moe_param`` weights;
++        experts outside EP (e.g. the HyperBody encoder at EP=1) are plain dense
++        params to FSDP, so a freshly allocated ``main_grad`` here would be a
++        private tensor FSDP never reduces and the experts would get no update.
++        Returns whether the weight is FSDP-owned.
++        """
++        fusion_buffer = getattr(weight, "_fusion_buffer", None)
++        if fusion_buffer is None:
++            return False
++        try:
++            from paddle.distributed.fsdp._fsdp_context import get_fsdp_context
++        except ImportError:
++            get_fsdp_context = None
++        ctx = get_fsdp_context() if get_fsdp_context is not None else None
++        if ctx is not None:
++            # Same as FSDP's own expert binding: zero last step's reduced shards
++            # first, and do not write into a buffer still being reduced.
++            ctx.comm_manager._maybe_zero_grads()
++            ctx.comm_manager._ensure_grads_writable(weight)
++        fusion_buffer.rebind_main_grad(weight)
++        return True
++
++    def _expert_weights_for_grad(self):
++        """The expert weights whose wgrad this layer writes (per-expert or stacked)."""
++        if self.experts is not None:
++            return [
++                w
++                for expert in self.experts
++                if expert is not None
++                for w in (expert.up_gate_proj.weight, expert.down_proj.weight)
++            ]
++        nodes = self.experts_group_gemm_node
++        if isinstance(nodes, list):
++            first_sliced = getattr(nodes[0], "grouped_gemm_experts", None)
++            if first_sliced is None or not hasattr(first_sliced, "_parent"):
++                return []
++            parent = first_sliced._parent
++        else:
++            parent = getattr(nodes, "grouped_gemm_experts", None)
++            if parent is None:
++                return []
++        return [parent.weight1, parent.weight2]
++
++    def _bind_fsdp_expert_main_grads(self):
++        """Bind every FSDP-owned, trainable expert weight's main_grad (no-op otherwise)."""
++        for weight in self._expert_weights_for_grad():
++            if not expert_weights_all_frozen(weight):
++                self._bind_fsdp_main_grad(weight)
++
+     def _ensure_weight_grad(self):
+         """Pre-allocate weight grads so VMM free-memory query reflects true availability.
+ 
+         Frozen experts are skipped: their wgrad GEMMs are skipped too (see
+         ``fp8_utils.expert_weights_all_frozen``), so an fp32 buffer the size of
+-        the expert weights would only waste memory.
++        the expert weights would only waste memory. FSDP-owned weights get their
++        FSDP grads-buffer slot instead (see ``_bind_fsdp_main_grad``).
+         """
+         if self.experts is not None:
+             for expert in self.experts:
+@@ -922,6 +978,8 @@ class MlpNode:
+                 ):
+                     if expert_weights_all_frozen(weight):
+                         continue
++                    if self._bind_fsdp_main_grad(weight):
++                        continue
+                     grad_attr = (
+                         "main_grad" if hasattr(weight, "main_grad") else "grad"
+                     )
+@@ -949,6 +1007,8 @@ class MlpNode:
+             pw = getattr(parent, attr)
+             if expert_weights_all_frozen(pw):
+                 continue
++            if self._bind_fsdp_main_grad(pw):
++                continue
+             grad_attr = "main_grad" if hasattr(pw, "main_grad") else "grad"
+             if getattr(pw, grad_attr) is None:
+                 setattr(
+@@ -3049,6 +3109,9 @@ class MlpNode:
+                 - dispatched_probs_grad (Tensor): 分发概率梯度。
+ 
+         """
++        # The group_gemm path allocates main_grad lazily inside the expert
++        # node; bind FSDP-owned weights first so the wgrad lands in FSDP.
++        self._bind_fsdp_expert_main_grads()
+         if self.use_auto_subbatch:
+             if self.auto_subbatch_mode == "pre_permute":
+                 return self.backward_auto_subbatch_pre_permute(

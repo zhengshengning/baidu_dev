@@ -1,0 +1,106 @@
+diff --git a/ernie5/src/trainers/dygraph_optimizer/hybrid_parallel_optimizer.py b/ernie5/src/trainers/dygraph_optimizer/hybrid_parallel_optimizer.py
+index 4b775d58..e2cd883d 100644
+--- a/ernie5/src/trainers/dygraph_optimizer/hybrid_parallel_optimizer.py
++++ b/ernie5/src/trainers/dygraph_optimizer/hybrid_parallel_optimizer.py
+@@ -448,6 +448,7 @@ class HybridParallelClipGrad:
+         self._log_enc_dec_grad_norm(encoder_norm_sq)
+         if self._timers:
+             self._timers("dygraph-clip").stop()
++        self._dump_grad_sumsq()
+ 
+         # [GRADPROBE] Drop the extra references so the per-param sum_square
+         # tensors are freed at the same time they would have been without the
+@@ -502,6 +503,68 @@ class HybridParallelClipGrad:
+             global_grad_norm_decoder=math.sqrt(dec_sq),
+         )
+ 
++    @no_grad()
++    def _dump_grad_sumsq(self):
++        """[GRADDUMP] 诊断用：把本 rank 各参数梯度的 sum-of-squares 逐个写文件，用于定位非确定性。
++
++        只在设置 GRAD_SUMSQ_DUMP_DIR 时生效，前 GRAD_SUMSQ_DUMP_STEPS（默认 1）次 clip 调用各写一份
++        ``step{n}_rank{r}.txt``（参数名 + float32 的 hex），两次运行逐行 diff 即可。
++        复用 [GRADPROBE] 已算好的 sum_square，只多一次 concat 和 D2H。
++        """
++        out_dir = os.environ.get("GRAD_SUMSQ_DUMP_DIR")
++        probe = getattr(self, "_probe", None)
++        if not out_dir or not probe:
++            return
++        if self.processed_steps > int(os.environ.get("GRAD_SUMSQ_DUMP_STEPS", "1")):
++            return
++        try:
++            vals = paddle.concat([s.astype("float32").reshape([1]) for _, s, _, _, _, _ in probe]).numpy()
++            os.makedirs(out_dir, exist_ok=True)
++            path = os.path.join(out_dir, f"step{self.processed_steps}_rank{dist.get_rank()}.txt")
++            with open(path, "w") as f:
++                for (name, _, _, _, dtype_str, shape), v in zip(probe, vals):
++                    f.write(f"{name}\t{dtype_str}\t{list(shape)}\t{float(v).hex()}\t{float(v):.9e}\n")
++            self._dump_fsdp_shard_sumsq(out_dir)
++        except Exception as e:  # never let diagnostics kill the job
++            logger.error(f"[GRADDUMP] dump failed: {type(e).__name__}: {e}")
++
++    @no_grad()
++    def _dump_fsdp_shard_sumsq(self, out_dir):
++        """[GRADDUMP] FSDP 融合 buffer 里按原参数名拆出本 rank 那段梯度的平方和。
++
++        FSDP 下 AdamW 类参数合在 ``fuse_params_*`` 里按元素切分，``_probe`` 只有 buffer 级的值，
++        对不上 stage1 的逐参数值。这里对每个分片 buffer 用 ``param_shard`` 取出本 rank 与各参数
++        重叠的那段，写 ``step{n}_rank{r}.shard.txt``；按参数名把各 rank 加起来就是整参数的平方和。
++        """
++        try:
++            from paddle.distributed.fsdp._fsdp_context import get_fsdp_context
++        except ImportError:
++            return
++        ctx = get_fsdp_context()
++        if ctx is None:
++            return
++        rows, sums = [], []
++        for group in ctx.buffer_manager.buffer_groups:
++            gb = group.grads_buffer
++            if gb is None or not gb.is_sharded or gb.data_buffer is None:
++                continue
++            flat = gb.data_buffer.reshape([-1])
++            for p in group.params:
++                hit = gb.param_shard(p)
++                if hit is None:
++                    continue
++                lo, hi, _ = hit
++                seg = flat[lo:hi].astype("float32")
++                rows.append((p.name, list(p.shape), hi - lo))
++                sums.append((seg * seg).sum().reshape([1]))
++        if not sums:
++            return
++        vals = paddle.concat(sums).numpy()
++        path = os.path.join(out_dir, f"step{self.processed_steps}_rank{dist.get_rank()}.shard.txt")
++        with open(path, "w") as f:
++            for (name, shape, n), v in zip(rows, vals):
++                f.write(f"{name}\t{shape}\t{n}\t{float(v).hex()}\t{float(v):.9e}\n")
++
+     @no_grad()
+     def _dump_grad_probe(self):
+         """[GRADPROBE] Name the parameters whose LOCAL grad norm is non-finite.
+@@ -635,6 +698,14 @@ class HybridParallelClipGrad:
+             + paddle.full(shape=[], dtype=paddle.float32, fill_value=1.0e-6),
+         )
+         logger.info(f"hybrid-moe-clip, var={clip_var.item()}, global_norm:{global_norm_var_fp32.item()}")
++        # [ALIGN] 诊断用（ALIGN_NO_CLIP=1）：裁剪系数固定为 1。stage1 / FSDP 求 norm 的加法顺序不同，
++        # norm 会差 1 ulp，触发裁剪时系数随之不同，逐位对齐必须关掉。norm 照常算和打印。
++        align_no_clip = os.environ.get("ALIGN_NO_CLIP") == "1"
++        if align_no_clip:
++            if not getattr(self, "_align_no_clip_logged", False):
++                self._align_no_clip_logged = True
++                logger.info("[ALIGN] no-clip hack ACTIVE (clip_var = 1)")
++            clip_var = paddle.ones_like(clip_var)
+         clip_var_fp16 = paddle.cast(clip_var, paddle.float16)
+ 
+         # [MULTIMAX-CLIP] Independent clip coefficient for the multimax group,
+@@ -668,6 +739,9 @@ class HybridParallelClipGrad:
+                 f"max_grad_norm={self.clip_norm}"
+             )
+             clip_var_multimax_fp16 = paddle.cast(clip_var_multimax, paddle.float16)
++            if align_no_clip:
++                clip_var_multimax = paddle.ones_like(clip_var_multimax)
++                clip_var_multimax_fp16 = paddle.cast(clip_var_multimax, paddle.float16)
+ 
+         if (
+             not isinstance(paddle.framework._current_expected_place(), paddle.CustomPlace)
